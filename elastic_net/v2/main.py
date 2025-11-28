@@ -4,17 +4,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 
-from elastic_net.v2.config import CONFIG, FEATURE_NAMES
-from elastic_net.v2.data_utils import set_seed, find_data_path, add_base_returns, winsorize_returns
-from elastic_net.v2.features import build_features
-from elastic_net.v2.models import (
+from config import CONFIG, FEATURE_NAMES
+from data_utils import set_seed, find_data_path, add_base_returns, winsorize_returns
+from features import build_features
+from models import (
     grid_search_window_and_reg,
     grid_search_alpha_l1,
     rolling_elasticnet_forecast,
     fit_final_elasticnet,
     evaluate_predictions,
 )
-from elastic_net.v2.forecasting import forecast_future_returns, returns_to_prices
+from forecasting import forecast_future_returns, returns_to_prices
 
 
 # =========================================

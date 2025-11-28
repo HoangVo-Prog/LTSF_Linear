@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import ElasticNet
 
-from elastic_net.v2.config import FEATURE_NAMES
+from config import FEATURE_NAMES
 
 
 # =========================================
