@@ -2,15 +2,13 @@
 
 from typing import Tuple, Dict, Any
 import numpy as np
+import pandas as pd                  # add this
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import StandardScaler
 
 
 class ResidualModel:
     def __init__(self, model_type: str = "elasticnet", use_scaler: bool = True, **kwargs):
-        """
-        Wrapper around ElasticNet / Ridge with optional StandardScaler.
-        """
         self.model_type = model_type
         self.use_scaler = use_scaler
         self.scaler = StandardScaler() if use_scaler else None
@@ -24,19 +22,27 @@ class ResidualModel:
 
     @property
     def model(self):
-        # for permutation_importance, etc.
         return self._base_model
 
     def fit(self, X, y):
         if self.use_scaler:
-            Xs = self.scaler.fit_transform(X)
+            Xs_arr = self.scaler.fit_transform(X)
+            # preserve feature names if X is a DataFrame
+            if isinstance(X, pd.DataFrame):
+                Xs = pd.DataFrame(Xs_arr, index=X.index, columns=X.columns)
+            else:
+                Xs = Xs_arr
         else:
             Xs = X
         self._base_model.fit(Xs, y)
 
     def predict(self, X):
         if self.use_scaler:
-            Xs = self.scaler.transform(X)
+            Xs_arr = self.scaler.transform(X)
+            if isinstance(X, pd.DataFrame):
+                Xs = pd.DataFrame(Xs_arr, index=X.index, columns=X.columns)
+            else:
+                Xs = Xs_arr
         else:
             Xs = X
         return self._base_model.predict(Xs)

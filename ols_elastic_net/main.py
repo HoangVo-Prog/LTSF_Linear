@@ -23,13 +23,6 @@ from feature_selection import compute_feature_importance, select_top_k_features,
 from optimize_residual import random_search_elasticnet, random_search_ridge
 from forecast import forecast_future_prices
 
-import warnings
-warnings.filterwarnings("ignore", message="invalid value encountered", module="pandas.core.computation.expressions")
-
-from sklearn.exceptions import ConvergenceWarning
-warnings.filterwarnings("ignore", category=ConvergenceWarning)
-
-
 
 def evaluate_path_mse_on_validation(
     df_full: pd.DataFrame,
