@@ -20,7 +20,7 @@ def forecast_future_returns(
     Dự đoán nhiều bước tương lai (multi step) theo kiểu autoregressive.
 
     Ý tưởng:
-      - Lấy 20 ngày cuối cùng của return và giá, 5 ngày cuối của vol_chg
+      - Lấy lịch sử return và giá (tối đa 252 ngày gần nhất)
       - Mỗi bước:
         + Từ buffer hiện tại build 1 vector feature
         + Scale và cho model dự đoán return ngày tiếp theo
@@ -32,17 +32,16 @@ def forecast_future_returns(
     """
     non_na = df["ret_1d_clipped"].notna()
     ret_series = df.loc[non_na, "ret_1d_clipped"].values.astype(float)
-    vol_series = df.loc[non_na, "vol_chg_clipped"].values.astype(float)
     close_series = df.loc[non_na, "close"].values.astype(float)
     time_series = df.loc[non_na, "time"].values
 
-    if len(ret_series) < 20 or len(vol_series) < 5:
+    if len(ret_series) < 20:
         raise ValueError("Not enough history to forecast")
 
-    # Buffer lịch sử
-    ret_buffer = list(ret_series[-20:])
-    vol_buffer = list(vol_series[-5:])
-    price_buffer = list(close_series[-20:])
+    # Dùng tối đa 252 ngày lịch sử để có thể tính slow regime features
+    max_hist = 252
+    ret_buffer = list(ret_series[-max_hist:])
+    price_buffer = list(close_series[-max_hist:])
     current_date = pd.Timestamp(time_series[-1])
 
     preds = []
@@ -67,20 +66,24 @@ def forecast_future_returns(
             return 0.0
         return float(np.mean(win))
 
+    def rolling_sum(a: np.ndarray, w: int) -> float:
+        """Sum của cửa sổ cuối cùng."""
+        win = last_window(a, w)
+        if len(win) == 0:
+            return 0.0
+        return float(np.sum(win))
+
     for _ in range(steps):
         feat_vals = {}
 
         ret_arr = np.array(ret_buffer, dtype=float)
-        vol_arr = np.array(vol_buffer, dtype=float)
         price_arr = np.array(price_buffer, dtype=float)
 
         current_ret = ret_arr[-1]
-        current_vol = vol_arr[-1]
         current_price = price_arr[-1]
 
         # Các feature cơ bản
         feat_vals["ret_1d_clipped"] = current_ret
-        feat_vals["vol_chg_clipped"] = current_vol
 
         # Return lags
         for k in range(1, 11):
@@ -89,14 +92,7 @@ def forecast_future_returns(
             else:
                 feat_vals[f"ret_lag{k}"] = 0.0
 
-        # Volume lags
-        for k in range(1, 6):
-            if len(vol_buffer) >= k:
-                feat_vals[f"vol_lag{k}"] = vol_buffer[-k]
-            else:
-                feat_vals[f"vol_lag{k}"] = 0.0
-
-        # Volatility và rolling stats
+        # Volatility và rolling stats (short horizon)
         feat_vals["vol_5"] = rolling_std(ret_arr, 5)
         feat_vals["vol_10"] = rolling_std(ret_arr, 10)
         feat_vals["vol_20"] = rolling_std(ret_arr, 20)
@@ -146,9 +142,48 @@ def forecast_future_returns(
             bb_width = 0.0
         feat_vals["bb_width_20"] = bb_width
 
-        # Calendar feature cho ngày tiếp theo
-        feat_vals["dow"] = current_date.dayofweek
-        feat_vals["month"] = current_date.month
+        # ---------- Slow regime features ----------
+
+        # Cumulative log returns trên 60, 120, 252 ngày
+        feat_vals["cumret_60"] = rolling_sum(ret_arr, 60)
+        feat_vals["cumret_120"] = rolling_sum(ret_arr, 120)
+        feat_vals["cumret_252"] = rolling_sum(ret_arr, 252)
+
+        # Realized volatility 60, 120 ngày
+        feat_vals["realized_vol_60"] = rolling_std(ret_arr, 60)
+        feat_vals["realized_vol_120"] = rolling_std(ret_arr, 120)
+
+        # Drawdown hiện tại so với đỉnh 60, 120 ngày
+        win60_price = last_window(price_arr, 60)
+        win120_price = last_window(price_arr, 120)
+        if len(win60_price) > 0:
+            max60 = float(np.max(win60_price))
+            feat_vals["drawdown_60"] = current_price / max60 - 1.0 if max60 != 0 else 0.0
+        else:
+            feat_vals["drawdown_60"] = 0.0
+
+        if len(win120_price) > 0:
+            max120 = float(np.max(win120_price))
+            feat_vals["drawdown_120"] = current_price / max120 - 1.0 if max120 != 0 else 0.0
+        else:
+            feat_vals["drawdown_120"] = 0.0
+
+        # Price percentile trong 252 ngày
+        win252_price = last_window(price_arr, 252)
+        if len(win252_price) > 0:
+            min252 = float(np.min(win252_price))
+            max252 = float(np.max(win252_price))
+            if max252 != min252:
+                feat_vals["price_pct_252"] = (current_price - min252) / (max252 - min252)
+            else:
+                feat_vals["price_pct_252"] = 0.5
+        else:
+            feat_vals["price_pct_252"] = 0.5
+
+        # Calendar feature cho ngày tiếp theo (business day)
+        next_date = current_date + pd.offsets.BDay(1)
+        feat_vals["dow"] = next_date.dayofweek
+        feat_vals["month"] = next_date.month
 
         # Sắp xếp feature theo đúng thứ tự FEATURE_NAMES
         x_vec = np.array([feat_vals[name] for name in FEATURE_NAMES], dtype=float).reshape(1, -1)
@@ -162,22 +197,16 @@ def forecast_future_returns(
         next_price = current_price * np.exp(r_pred_next)
 
         ret_buffer.append(r_pred_next)
-        if len(ret_buffer) > 20:
-            ret_buffer = ret_buffer[-20:]
-
-        # Volume tương lai hiện tại giả định là 0
-        vol_buffer.append(0.0)
-        if len(vol_buffer) > 5:
-            vol_buffer = vol_buffer[-5:]
+        if len(ret_buffer) > max_hist:
+            ret_buffer = ret_buffer[-max_hist:]
 
         price_buffer.append(next_price)
-        if len(price_buffer) > 20:
-            price_buffer = price_buffer[-20:]
+        if len(price_buffer) > max_hist:
+            price_buffer = price_buffer[-max_hist:]
 
-        current_date = current_date + pd.offsets.BDay(1)
+        current_date = next_date
 
     return np.array(preds, dtype=float)
-
 
 # =========================================
 # Chuyển chuỗi return thành chuỗi giá

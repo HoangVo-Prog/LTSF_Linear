@@ -46,51 +46,46 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     Input: df đã có các cột:
       - time
       - close
+      - ret_1d
       - ret_1d_clipped
-      - vol_chg_clipped
+      - vol_chg_clipped (không còn dùng cho feature, nhưng vẫn có trong df)
 
     Output: dataframe có
       - time
       - toàn bộ FEATURE_NAMES
-      - y: target là return ngày t+1
+      - y: target là return ngày t+1 (ret_1d không clipped)
     """
-    feat = df[["time", "close", "ret_1d_clipped", "vol_chg_clipped"]].copy()
+    # Giữ cả ret_1d và ret_1d_clipped
+    feat = df[["time", "close", "ret_1d", "ret_1d_clipped"]].copy()
 
-    r = feat["ret_1d_clipped"]
-    v = feat["vol_chg_clipped"]
+    r_clip = feat["ret_1d_clipped"]
+    r_raw = feat["ret_1d"]
     c = feat["close"]
 
-    # Lags của return 1 đến 10 ngày
+    # Lags của return 1 đến 10 ngày (dùng clipped)
     for lag in range(1, 11):
         if lag == 1:
-            feat[f"ret_lag{lag}"] = r
+            feat[f"ret_lag{lag}"] = r_clip
         else:
-            feat[f"ret_lag{lag}"] = r.shift(lag - 1)
+            feat[f"ret_lag{lag}"] = r_clip.shift(lag - 1)
 
-    # Lags của vol_chg 1 đến 5 ngày
-    for lag in range(1, 6):
-        if lag == 1:
-            feat[f"vol_lag{lag}"] = v
-        else:
-            feat[f"vol_lag{lag}"] = v.shift(lag - 1)
-
-    # Độ biến động rolling của return
-    feat["vol_5"] = r.rolling(5).std()
-    feat["vol_10"] = r.rolling(10).std()
-    feat["vol_20"] = r.rolling(20).std()
+    # Độ biến động rolling của return (clipped)
+    feat["vol_5"] = r_clip.rolling(5).std()
+    feat["vol_10"] = r_clip.rolling(10).std()
+    feat["vol_20"] = r_clip.rolling(20).std()
 
     # Min, max return trong 20 ngày gần nhất
-    feat["ret_roll_min_20"] = r.rolling(20).min()
-    feat["ret_roll_max_20"] = r.rolling(20).max()
+    feat["ret_roll_min_20"] = r_clip.rolling(20).min()
+    feat["ret_roll_max_20"] = r_clip.rolling(20).max()
 
     # Z score của return so với rolling mean, std 20 ngày
-    roll_mean_20 = r.rolling(20).mean()
-    roll_std_20 = r.rolling(20).std()
-    feat["ret_z_20"] = (r - roll_mean_20) / roll_std_20.replace(0, np.nan)
+    roll_mean_20 = r_clip.rolling(20).mean()
+    roll_std_20 = r_clip.rolling(20).std()
+    feat["ret_z_20"] = (r_clip - roll_mean_20) / roll_std_20.replace(0, np.nan)
 
     # Trung bình return ngắn hạn
-    feat["mean_ret_5"] = r.rolling(5).mean()
-    feat["mean_ret_10"] = r.rolling(10).mean()
+    feat["mean_ret_5"] = r_clip.rolling(5).mean()
+    feat["mean_ret_10"] = r_clip.rolling(10).mean()
     feat["mean_ret_20"] = roll_mean_20
 
     # SMA và trend theo SMA
@@ -108,12 +103,34 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     lower20 = feat["sma20"] - 2 * std20_price
     feat["bb_width_20"] = (upper20 - lower20) / feat["sma20"]
 
-    # Feature theo lịch
+    # ---------- Slow regime features ----------
+    # Cumulative log return over 60, 120, 252 ngày (dùng raw ret_1d)
+    feat["cumret_60"] = r_raw.rolling(60).sum()
+    feat["cumret_120"] = r_raw.rolling(120).sum()
+    feat["cumret_252"] = r_raw.rolling(252).sum()
+
+    # Realized volatility trên 60, 120 ngày (std của raw returns)
+    feat["realized_vol_60"] = r_raw.rolling(60).std()
+    feat["realized_vol_120"] = r_raw.rolling(120).std()
+
+    # Drawdown hiện tại so với đỉnh 60, 120 ngày gần nhất
+    roll_max_60 = c.rolling(60).max()
+    roll_max_120 = c.rolling(120).max()
+    feat["drawdown_60"] = c / roll_max_60 - 1.0
+    feat["drawdown_120"] = c / roll_max_120 - 1.0
+
+    # Price percentile trong cửa sổ 252 ngày (52 week range)
+    roll_min_252 = c.rolling(252).min()
+    roll_max_252 = c.rolling(252).max()
+    denom_252 = (roll_max_252 - roll_min_252).replace(0, np.nan)
+    feat["price_pct_252"] = (c - roll_min_252) / denom_252
+
+    # Feature theo lịch (dùng time của ngày hiện tại)
     feat["dow"] = feat["time"].dt.dayofweek.astype(int)
     feat["month"] = feat["time"].dt.month.astype(int)
 
-    # Target: return ngày t+1
-    feat["y"] = feat["ret_1d_clipped"].shift(-1)
+    # Target: return ngày t+1, dùng raw ret_1d (không clipped)
+    feat["y"] = feat["ret_1d"].shift(-1)
 
     cols = ["time"] + FEATURE_NAMES + ["y"]
     feat = feat[cols]

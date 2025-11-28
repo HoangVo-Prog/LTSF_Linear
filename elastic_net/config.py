@@ -20,14 +20,20 @@ CONFIG: Dict[str, object] = {
     # Số ngày tương lai muốn dự đoán cho submission
     "forecast_steps": 100,
 
+    # Số ngày horizon dùng cho multi step validation
+    "val_horizon": 50,
+
+    # Số anchor dùng cho multi step validation trong đoạn validation
+    "val_num_anchors": 10,
+
     # Số lần lặp tối đa cho ElasticNet
     "elastic_max_iter": 5000,
 }
 
 # Danh sách tên feature dùng để train model
 FEATURE_NAMES: List[str] = [
+    # local short horizon stuff
     "ret_1d_clipped",
-    "vol_chg_clipped",
     "ret_lag1",
     "ret_lag2",
     "ret_lag3",
@@ -38,11 +44,6 @@ FEATURE_NAMES: List[str] = [
     "ret_lag8",
     "ret_lag9",
     "ret_lag10",
-    "vol_lag1",
-    "vol_lag2",
-    "vol_lag3",
-    "vol_lag4",
-    "vol_lag5",
     "vol_5",
     "vol_10",
     "vol_20",
@@ -58,6 +59,18 @@ FEATURE_NAMES: List[str] = [
     "price_trend_20",
     "rsi_14",
     "bb_width_20",
+
+    # slow regime features (3 to 12 month scale)
+    "cumret_60",
+    "cumret_120",
+    "cumret_252",
+    "realized_vol_60",
+    "realized_vol_120",
+    "drawdown_60",
+    "drawdown_120",
+    "price_pct_252",
+
+    # calendar
     "dow",
     "month",
 ]
