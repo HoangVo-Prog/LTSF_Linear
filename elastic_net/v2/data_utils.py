@@ -24,6 +24,7 @@ def find_data_path(filename: str) -> Path:
         Path("/kaggle/input/aio-2025-linear-forecasting-challenge") / filename,
         Path("../input/aio-2025-linear-forecasting-challenge") / filename,
         Path("/kaggle/input/linear-forecaseting-fpt") / filename,
+        Path("LTSF_LINEAR/data/aio-2025-linear-forecasting-challenge") / filename,
         Path("./") / filename,
     ]
     for p in candidates:

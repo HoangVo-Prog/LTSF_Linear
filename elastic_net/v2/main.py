@@ -4,17 +4,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 
-from config import CONFIG, FEATURE_NAMES
-from data_utils import set_seed, find_data_path, add_base_returns, winsorize_returns
-from features import build_features
-from models import (
+from elastic_net.v2.config import CONFIG, FEATURE_NAMES
+from elastic_net.v2.data_utils import set_seed, find_data_path, add_base_returns, winsorize_returns
+from elastic_net.v2.features import build_features
+from elastic_net.v2.models import (
     grid_search_window_and_reg,
     grid_search_alpha_l1,
     rolling_elasticnet_forecast,
     fit_final_elasticnet,
     evaluate_predictions,
 )
-from forecasting import forecast_future_returns, returns_to_prices
+from elastic_net.v2.forecasting import forecast_future_returns, returns_to_prices
 
 
 # =========================================
@@ -103,23 +103,47 @@ def main() -> None:
     m0 = evaluate_predictions(y_true_val, y_pred_val)
     print(f"MSE: {m0['mse']:.8f}, MAE: {m0['mae']:.8f}, n_val_used: {mask_val_used.sum()}")
 
-    # ============================================================
+        # ============================================================
     # Bước 8: multi step validation mô phỏng đúng pipeline submit
     # ============================================================
     print("\nMulti step validation mô phỏng pipeline submit:")
 
-    val_horizon = int(CONFIG.get("val_horizon", 50))
+    # Horizon mong muốn từ config
+    val_horizon_cfg = int(CONFIG.get("val_horizon", 50))
     val_num_anchors = int(CONFIG.get("val_num_anchors", 10))
 
     times_all = feat_df["time"].values
     val_idx = np.where(feat_df["is_val"].values)[0]
+
+    if len(val_idx) == 0:
+        raise RuntimeError("Không có index nào thuộc validation trong feat_df")
+
+    # Với mỗi điểm trong validation xem còn bao nhiêu ngày phía sau
+    max_future_in_val = max(len(feat_df) - idx - 1 for idx in val_idx)
+
+    if max_future_in_val < 5:
+        # Quá ít điểm tương lai để làm multi step validation
+        raise RuntimeError(
+            f"Không đủ dữ liệu tương lai cho validation (max_future_in_val={max_future_in_val})"
+        )
+
+    # Horizon thực tế là min(horizon mong muốn, số ngày tương lai tối đa)
+    val_horizon = min(val_horizon_cfg, max_future_in_val)
+    if val_horizon < val_horizon_cfg:
+        print(
+            f"Giảm val_horizon từ {val_horizon_cfg} xuống {val_horizon} "
+            f"do giới hạn độ dài dữ liệu"
+        )
 
     # Chỉ chọn anchor sao cho còn đủ val_horizon ngày phía sau
     max_anchor_idx = len(feat_df) - val_horizon - 1
     val_idx = val_idx[val_idx <= max_anchor_idx]
 
     if len(val_idx) == 0:
-        raise RuntimeError("Không đủ dữ liệu validation để chạy multi step validation")
+        raise RuntimeError(
+            "Không đủ dữ liệu validation để chạy multi step validation "
+            f"ngay cả với val_horizon={val_horizon}"
+        )
 
     # Lấy tối đa val_num_anchors anchor, trải đều trong đoạn validation
     if len(val_idx) > val_num_anchors:
@@ -159,7 +183,6 @@ def main() -> None:
         # Map anchor_time sang index trong df gốc
         df_anchor_idx = df.index[df["time"] == anchor_time]
         if len(df_anchor_idx) == 0:
-            # Nếu không map được thẳng (do dropna trong features) thì bỏ anchor này
             print("    Không tìm thấy anchor trong df gốc, bỏ qua.")
             continue
         df_anchor_idx = int(df_anchor_idx[0])
@@ -180,17 +203,14 @@ def main() -> None:
         true_prices = df_future["close"].values.astype(float)
 
         if len(true_rets) < val_horizon:
-            # Không đủ dữ liệu tương lai, bỏ anchor
-            print("    Không đủ dữ liệu tương lai cho horizon, bỏ qua anchor.")
+            print("    Không đủ dữ liệu tương lai cho horizon tại anchor này, bỏ qua.")
             continue
 
         last_price = df_hist["close"].iloc[-1]
-        anchor_last_prices.append(last_price)
 
         # Xây dựng price path từ returns
         price_true_path = returns_to_prices(last_price=last_price, future_returns=true_rets)
         price_model_uncal_path = returns_to_prices(last_price=last_price, future_returns=pred_rets)
-
         price_naive_path = np.full_like(price_true_path, last_price, dtype=float)
 
         all_pred_rets.append(pred_rets)
@@ -198,9 +218,11 @@ def main() -> None:
         all_true_prices.append(price_true_path)
         all_model_prices_uncal.append(price_model_uncal_path)
         all_naive_prices.append(price_naive_path)
+        anchor_last_prices.append(last_price)
 
     if len(all_pred_rets) == 0:
         raise RuntimeError("Không có anchor hợp lệ để multi step validation")
+
 
     # Gộp các anchor lại
     y_true_flat = np.concatenate(all_true_rets)

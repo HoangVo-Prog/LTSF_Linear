@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from config import FEATURE_NAMES
+from elastic_net.v2.config import FEATURE_NAMES
 
 
 # =========================================
