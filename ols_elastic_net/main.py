@@ -80,8 +80,9 @@ def main():
 
     # 3. Add trend and residual, then technical features for full data
     df_trend_all = trend_model.add_trend_and_residual(df)
-    df_feat_all = add_technical_features(df_trend_all)
-
+    with np.errstate(all="warn"):
+        df_feat_all = add_technical_features(df_trend_all)
+        
     # 4. Build supervised residual dataset
     X_all, y_all, feature_names_raw = make_supervised_residual_dataset(df_feat_all)
 
