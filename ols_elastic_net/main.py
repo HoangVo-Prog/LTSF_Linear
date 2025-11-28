@@ -94,15 +94,16 @@ def main():
     price_min_hist = df["close"].min()
     price_max_hist = df["close"].max()
 
-    # generous but realistic band around historical range
-    clip_low = np.log(price_min_hist * 0.8)
-    clip_high = np.log(price_max_hist * 1.3)
+    # Slightly conservative band
+    clip_low = float(np.log(price_min_hist * 0.9))   # 90% of min
+    clip_high = float(np.log(price_max_hist * 1.1))  # 110% of max
 
     print(
         f"Log price clip bounds: "
         f"low={clip_low:.3f} (price≈{np.exp(clip_low):.2f}), "
         f"high={clip_high:.3f} (price≈{np.exp(clip_high):.2f})"
     )
+
 
     
     # 2. Fit trend model on full history (2020–2025)
@@ -267,6 +268,7 @@ def main():
     submission["close"] = preds_future.astype(float)
     submission.to_csv(OUTPUT_SUBMISSION_CSV, index=False)
     print(f"Saved submission to {OUTPUT_SUBMISSION_CSV}")
+    print(submission.head())
 
 
 if __name__ == "__main__":

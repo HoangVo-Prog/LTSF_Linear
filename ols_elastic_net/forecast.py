@@ -22,7 +22,7 @@ def forecast_future_prices(
       1) Rebuild trend, residual and features on full current history
       2) Build supervised X, y (y ignored)
       3) Take last feature row and predict next residual
-      4) Shrink residual and combine with trend at next index to get next log price
+      4) Shrink residual and combine with *flat* trend for next step
       5) Clip log price to [log_clip_low, log_clip_high]
       6) Convert to price, append to history and continue
     """
@@ -49,12 +49,13 @@ def forecast_future_prices(
         x_latest = X_all.iloc[[-1]]
         resid_pred = float(residual_model.predict(x_latest)[0])
 
-        # Apply shrink factor so residual impact does not explode over 100 steps
+        # Shrink residual so impact does not explode over many steps
         resid_next = residual_shrink * resid_pred
 
-        # 5. Trend for next index
-        t_next = len(df_hist)
-        trend_next = float(trend_model.predict_on_index(np.array([t_next]))[0])
+        # 5. FLAT TREND: assume trend is flat beyond last point
+        #    instead of polynomial extrapolation.
+        trend_last = float(df_trend["trend"].iloc[-1])
+        trend_next = trend_last
 
         # 6. Combine trend and residual in log space and clip
         log_price_next = trend_next + resid_next
