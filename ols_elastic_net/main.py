@@ -164,6 +164,7 @@ def main():
     print(f"Permutation importance: n_features={len(feature_names_val)}, "
         f"importances_len={len(importances)}")
 
+    top_features = select_top_k_features(importances, feature_names_val, TOP_K_FEATURES)
     # Remove resid_lag* from the forecasting model to improve long horizon stability
     top_features = [f for f in top_features if not f.startswith("resid_lag")]
 
