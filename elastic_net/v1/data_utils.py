@@ -23,6 +23,7 @@ def find_data_path(filename: str) -> Path:
     candidates = [
         Path("/kaggle/input/aio-2025-linear-forecasting-challenge") / filename,
         Path("../input/aio-2025-linear-forecasting-challenge") / filename,
+        Path("LTSF_Linear/data/aio-2025-linear-forecasting-challenge") / filename,
         Path("./") / filename,
     ]
     for p in candidates:
