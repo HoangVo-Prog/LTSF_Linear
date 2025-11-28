@@ -23,8 +23,15 @@ from feature_selection import compute_feature_importance, select_top_k_features,
 from optimize_residual import random_search_elasticnet, random_search_ridge
 from forecast import forecast_future_prices
 
-pd.set_option("compute.use_numexpr", False)
 
+import warnings
+pd.set_option("compute.use_numexpr", False)
+warnings.filterwarnings(
+    "ignore",
+    message="invalid value encountered in",
+    category=RuntimeWarning,
+    module="pandas.core.computation.expressions",
+)
 
 
 def evaluate_path_mse_on_validation(
