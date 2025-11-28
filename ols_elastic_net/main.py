@@ -13,6 +13,7 @@ from config import (
     TOP_K_FEATURES,
     N_RANDOM_SEARCH,
     FORECAST_STEPS,
+    RESIDUAL_SHRINK,
 )
 
 from data_utils import load_price_data, train_val_split
@@ -35,13 +36,15 @@ warnings.filterwarnings(
 
 
 def evaluate_path_mse_on_validation(
-    df_full: pd.DataFrame,
-    trend_model: TrendModel,
-    residual_model: ResidualModel,
-    feature_names: list,
+    df_full,
+    trend_model,
+    residual_model,
+    feature_names,
     start_date: str,
-    horizon: int = 100,
-) -> None:
+    horizon: int,
+    log_clip_low: float,
+    log_clip_high: float,
+):
     """
     Evaluate 100-step recursive forecast on a validation segment.
 
@@ -66,7 +69,11 @@ def evaluate_path_mse_on_validation(
         residual_model=residual_model,
         feature_names=feature_names,
         steps=horizon,
+        log_clip_low=log_clip_low,
+        log_clip_high=log_clip_high,
+        residual_shrink=RESIDUAL_SHRINK,
     )
+
 
     true_prices = df_future_true["close"].iloc[:horizon].values.astype(float)
 
@@ -84,6 +91,20 @@ def main():
     print(f"Train period: {train_df['time'].min()} -> {train_df['time'].max()}, n={len(train_df)}")
     print(f"Val period:   {val_df['time'].min()} -> {val_df['time'].max()}, n={len(val_df)}")
 
+    price_min_hist = df["close"].min()
+    price_max_hist = df["close"].max()
+
+    # generous but realistic band around historical range
+    clip_low = np.log(price_min_hist * 0.8)
+    clip_high = np.log(price_max_hist * 1.3)
+
+    print(
+        f"Log price clip bounds: "
+        f"low={clip_low:.3f} (price≈{np.exp(clip_low):.2f}), "
+        f"high={clip_high:.3f} (price≈{np.exp(clip_high):.2f})"
+    )
+
+    
     # 2. Fit trend model on full history (2020–2025)
     trend_model = TrendModel(degree=TREND_POLY_DEGREE)
     trend_model.fit(df)
@@ -143,11 +164,23 @@ def main():
     print(f"Permutation importance: n_features={len(feature_names_val)}, "
         f"importances_len={len(importances)}")
 
-    top_features = select_top_k_features(importances, feature_names_val, TOP_K_FEATURES)
+    # Remove resid_lag* from the forecasting model to improve long horizon stability
+    top_features = [f for f in top_features if not f.startswith("resid_lag")]
 
-    print("Top features:")
+    if len(top_features) == 0:
+        # fallback: keep a few strongest non residual features
+        non_resid_idx = [
+            i for i, name in enumerate(feature_names_val)
+            if not name.startswith("resid_lag")
+        ]
+        # take first 20 non residual features by importance
+        sorted_idx = np.argsort(importances[non_resid_idx])[::-1]
+        top_features = [feature_names_val[non_resid_idx[i]] for i in sorted_idx[:20]]
+
+    print("Top features after removing resid_lag*:")
     for f in top_features:
         print("  ", f)
+
 
 
     # 7. Restrict to core features
@@ -200,6 +233,8 @@ def main():
         feature_names=top_features,
         start_date="2024-01-02",  # choose any date in validation with >= 100 future days
         horizon=100,
+        log_clip_low=clip_low,
+        log_clip_high=clip_high,
     )
 
     # 11. Forecast future prices (100 steps) for submission
@@ -209,22 +244,15 @@ def main():
         residual_model=final_residual_model,
         feature_names=top_features,
         steps=FORECAST_STEPS,
+        log_clip_low=clip_low,
+        log_clip_high=clip_high,
+        residual_shrink=RESIDUAL_SHRINK,
     )
 
     print(
         "Future price path for submission: min={:.2f}, max={:.2f}".format(
             preds_future.min(), preds_future.max()
         )
-    )
-
-
-    # 10. Forecast future prices (100 steps)
-    preds_future = forecast_future_prices(
-        df_hist_raw=df,
-        trend_model=trend_model,
-        residual_model=final_residual_model,
-        feature_names=top_features,
-        steps=FORECAST_STEPS,
     )
 
     # 11. Build submission

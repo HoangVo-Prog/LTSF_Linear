@@ -11,6 +11,7 @@ TRAIN_END_DATE = "2023-01-01"  # train: < this date, validation: >= this date
 TREND_POLY_DEGREE = 3
 
 RESIDUAL_MODEL_TYPE = "elasticnet"  # "elasticnet" or "ridge"
+RESIDUAL_SHRINK = 0.7  # 0.5 to 0.8 is a reasonable range
 
 # Lags and windows for features
 MAX_LAG = 5
