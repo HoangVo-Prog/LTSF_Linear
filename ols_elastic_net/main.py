@@ -41,7 +41,7 @@ def main():
     df_feat_all = add_technical_features(df_trend_all)
 
     # 4. Build supervised residual dataset
-    X_all, y_all, feature_names = make_supervised_residual_dataset(df_feat_all)
+    X_all, y_all, feature_names_raw = make_supervised_residual_dataset(df_feat_all)
 
     # align X, y with train and val by date
     supervised_df = df_feat_all.loc[X_all.index, ["time"]].copy()
@@ -51,12 +51,16 @@ def main():
     train_mask = supervised_df["time"] < pd.Timestamp(TRAIN_END_DATE)
     val_mask = supervised_df["time"] >= pd.Timestamp(TRAIN_END_DATE)
 
-    X_train = supervised_df.loc[train_mask, feature_names]
+    # Use the actual columns from X_all to avoid any mismatch
+    used_feature_names = list(X_all.columns)
+
+    X_train = supervised_df.loc[train_mask, used_feature_names]
     y_train = supervised_df.loc[train_mask, "target"]
-    X_val = supervised_df.loc[val_mask, feature_names]
+    X_val = supervised_df.loc[val_mask, used_feature_names]
     y_val = supervised_df.loc[val_mask, "target"]
 
     print(f"Supervised train shape: {X_train.shape}, val shape: {X_val.shape}")
+
 
     # 5. Initial residual model fit with default hyperparameters
     if RESIDUAL_MODEL_TYPE == "elasticnet":
@@ -79,7 +83,8 @@ def main():
 
     # 6. Feature importance on validation
     importances = compute_feature_importance(base_model, X_val, y_val, n_repeats=10)
-    top_features = select_top_k_features(importances, feature_names, TOP_K_FEATURES)
+    top_features = select_top_k_features(importances, used_feature_names, TOP_K_FEATURES)
+
     print("Top features:")
     for f in top_features:
         print("  ", f)
