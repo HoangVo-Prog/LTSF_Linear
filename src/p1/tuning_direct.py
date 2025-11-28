@@ -4,10 +4,13 @@ from typing import Dict, Any, List, Tuple
 import numpy as np
 import pandas as pd
 
-from config import HORIZON, RANDOM_STATE
+
 from models_direct import MODEL_REGISTRY, Direct100Model
 from ensemble import compute_price_endpoint_from_R, mse
 
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import HORIZON, RANDOM_STATE
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     """

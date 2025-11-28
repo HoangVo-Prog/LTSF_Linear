@@ -3,17 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from config import HORIZON, TRAIN_CSV
-from data_utils import (
-    load_data,
-    add_base_series,
-    ensure_business_day_indexing,
-    winsorize_series,
-)
-from features import build_features
-from splits import make_folds, get_test_indices
 from targets_direct import build_direct_100d_target
-from feature_selection import run_feature_selection_direct
 from models_direct import MODEL_REGISTRY
 from tuning_direct import (
     tune_model_direct,
@@ -23,7 +13,22 @@ from ensemble import (
     tune_ensemble_weights_random_search,
     tune_ensemble_shrinkage,
 )
+
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_utils import (
+    load_data,
+    add_base_series,
+    ensure_business_day_indexing,
+    winsorize_series,
+)
+
+from config import HORIZON, TRAIN_CSV
 from submission import make_submission
+from features import build_features
+from splits import make_folds, get_test_indices
+from feature_selection import run_feature_selection_direct
 
 
 def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
