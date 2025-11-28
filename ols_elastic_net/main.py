@@ -24,6 +24,48 @@ from optimize_residual import random_search_elasticnet, random_search_ridge
 from forecast import forecast_future_prices
 
 
+def evaluate_path_mse_on_validation(
+    df_full: pd.DataFrame,
+    trend_model: TrendModel,
+    residual_model: ResidualModel,
+    feature_names: list,
+    start_date: str,
+    horizon: int = 100,
+) -> None:
+    """
+    Evaluate 100-step recursive forecast on a validation segment.
+
+    start_date:
+      We use all data up to and including this date as "history".
+      Then we forecast `horizon` days and compare with the actual
+      next `horizon` closes in df_full.
+    """
+    start_ts = pd.Timestamp(start_date)
+    df_hist = df_full[df_full["time"] <= start_ts].copy()
+    df_future_true = df_full[df_full["time"] > start_ts].copy()
+
+    df_future_true = df_future_true.sort_values("time").reset_index(drop=True)
+
+    if len(df_future_true) < horizon:
+        print(f"[WARN] Not enough future data after {start_date} for horizon={horizon}")
+        return
+
+    preds = forecast_future_prices(
+        df_hist_raw=df_hist,
+        trend_model=trend_model,
+        residual_model=residual_model,
+        feature_names=feature_names,
+        steps=horizon,
+    )
+
+    true_prices = df_future_true["close"].iloc[:horizon].values.astype(float)
+
+    mse_path = np.mean((preds - true_prices) ** 2)
+    print(f"Path MSE on validation (start={start_date}, horizon={horizon}): {mse_path:.4f}")
+    print(f"True price range:   min={true_prices.min():.2f}, max={true_prices.max():.2f}")
+    print(f"Predicted range:    min={preds.min():.2f},      max={preds.max():.2f}")
+    
+
 def main():
     # 1. Load data
     df = load_price_data(TRAIN_CSV)
@@ -138,6 +180,32 @@ def main():
     final_residual_model.fit(X_all_core, y_all_core)
 
     print("Final residual model fit on full supervised dataset.")
+    
+    # 10. Optional: sanity check 100-step path on validation
+    evaluate_path_mse_on_validation(
+        df_full=df,
+        trend_model=trend_model,
+        residual_model=final_residual_model,
+        feature_names=top_features,
+        start_date="2024-01-02",  # choose any date in validation with >= 100 future days
+        horizon=100,
+    )
+
+    # 11. Forecast future prices (100 steps) for submission
+    preds_future = forecast_future_prices(
+        df_hist_raw=df,
+        trend_model=trend_model,
+        residual_model=final_residual_model,
+        feature_names=top_features,
+        steps=FORECAST_STEPS,
+    )
+
+    print(
+        "Future price path for submission: min={:.2f}, max={:.2f}".format(
+            preds_future.min(), preds_future.max()
+        )
+    )
+
 
     # 10. Forecast future prices (100 steps)
     preds_future = forecast_future_prices(

@@ -54,9 +54,14 @@ def forecast_future_prices(
 
         log_price_next = trend_next + resid_next
 
-        # Clip to avoid exp overflow and absurd prices
+        # Old clipping
+        # log_price_next = float(
+        #     np.clip(log_price_next, np.log(1.0), np.log(1e4))
+        # )
+
+        # New, tighter clipping around realistic FPT range
         log_price_next = float(
-            np.clip(log_price_next, np.log(1.0), np.log(1e4))
+            np.clip(log_price_next, np.log(10.0), np.log(300.0))
         )
 
         price_next = float(np.exp(log_price_next))
