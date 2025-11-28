@@ -23,6 +23,9 @@ from feature_selection import compute_feature_importance, select_top_k_features,
 from optimize_residual import random_search_elasticnet, random_search_ridge
 from forecast import forecast_future_prices
 
+pd.set_option("compute.use_numexpr", False)
+
+
 
 def evaluate_path_mse_on_validation(
     df_full: pd.DataFrame,
@@ -81,11 +84,6 @@ def main():
     # 3. Add trend and residual, then technical features for full data
     df_trend_all = trend_model.add_trend_and_residual(df)
     df_feat_all = add_technical_features(df_trend_all)
-
-    # Clean numeric columns to avoid NaN/inf problems in later comparisons
-    num_cols = df_feat_all.select_dtypes(include=[np.number]).columns
-    df_feat_all[num_cols] = df_feat_all[num_cols].replace([np.inf, -np.inf], np.nan)
-    df_feat_all[num_cols] = df_feat_all[num_cols].fillna(0.0)
 
         
     # 4. Build supervised residual dataset
