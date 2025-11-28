@@ -1,7 +1,7 @@
 # config.py
 
 TRAIN_CSV = "LTSF_Linear/data/aio-2025-linear-forecasting-challenge/FPT_train.csv"
-SUBMISSION_TEMPLATE_CSV = "sample_submission.csv"
+SUBMISSION_TEMPLATE_CSV = "LTSF_Linear/data/aio-2025-linear-forecasting-challenge/sample_submission.csv"
 OUTPUT_SUBMISSION_CSV = "submission.csv"
 
 # Time split
