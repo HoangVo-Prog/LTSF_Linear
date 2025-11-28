@@ -108,7 +108,20 @@ def main() -> None:
     # =========================================
     cal = LinearRegression()
     cal.fit(y_pred_val.reshape(-1, 1), y_true_val)
-    y_pred_val_cal = cal.predict(y_pred_val.reshape(-1, 1)).reshape(-1)
+    
+    a = cal.intercept_
+    b = cal.coef_[0]
+
+    # Nếu b hoặc a quá cực đoan, bỏ calibration (dùng identity)
+    if abs(b) > 2.0 or abs(a) > 0.01:
+        print(f"Calibration unstable (a={a:.6e}, b={b:.6f}), dùng identity instead.")
+        a, b = 0.0, 1.0
+
+    def apply_cal(x: np.ndarray) -> np.ndarray:
+        return a + b * x
+
+    y_pred_val_cal = apply_cal(y_pred_val)
+    # y_pred_val_cal = cal.predict(y_pred_val.reshape(-1, 1)).reshape(-1)
 
     mse_before = mean_squared_error(y_true_val, y_pred_val)
     mse_after = mean_squared_error(y_true_val, y_pred_val_cal)
@@ -177,6 +190,10 @@ def main() -> None:
     print(f"  Model PRICE MSE: {mean_squared_error(price_true_arr, price_model_arr):.6f}")
     print(f"  Best w_naive = {best_w:.2f}, w_model = {1.0 - best_w:.2f}, MSE = {best_mse:.6f}")
 
+    #############################################
+    # Với horizon dài, bảo thủ: ưu tiên naive nhiều hơn
+    w_naive_long = 0.5  # hoặc 0.6 / 0.7 – bạn có thể thử vài giá trị
+    print(f"Dùng w_naive_long = {w_naive_long:.2f} cho forecast 100 ngày")
 
     # Bước 11: fit ElasticNet cuối cùng trên toàn bộ dữ liệu
     print("\nFit ElasticNet cuối cùng trên toàn bộ dữ liệu:")
@@ -199,16 +216,15 @@ def main() -> None:
         steps=CONFIG["forecast_steps"],
     )
 
-    # Áp calibration 1-step cho chuỗi return tương lai
-    # (dùng cal đã fit trên toàn bộ validation)
-    future_returns_cal = cal.predict(future_returns_raw.reshape(-1, 1)).reshape(-1)
+    # Không dùng calibration cho forecast 100 ngày – dùng luôn raw output
+    future_returns_cal = future_returns_raw.copy()
 
-    # Chuyển thành path giá theo model
     last_price = df["close"].iloc[-1]
     price_future_model = returns_to_prices(
         last_price=last_price,
         future_returns=future_returns_cal,
     )
+
 
     # Path giá naive: giữ nguyên giá cuối cùng
     price_future_naive = np.full_like(price_future_model, last_price, dtype=float)
