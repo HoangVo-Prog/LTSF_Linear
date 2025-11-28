@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from features import add_technical_features
-from data_utils import make_supervised_residual_dataset
+from features import add_technical_features, make_supervised_residual_dataset
 from feature_selection import filter_feature_matrix
 
 
