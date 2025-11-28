@@ -103,6 +103,20 @@ def main() -> None:
     m0 = evaluate_predictions(y_true_val, y_pred_val)
     print(f"MSE: {m0['mse']:.8f}, MAE: {m0['mae']:.8f}, n_val_used: {mask_val_used.sum()}")
 
+    # =========================================
+    # Calibration 1-step trên toàn bộ validation
+    # =========================================
+    cal = LinearRegression()
+    cal.fit(y_pred_val.reshape(-1, 1), y_true_val)
+    y_pred_val_cal = cal.predict(y_pred_val.reshape(-1, 1)).reshape(-1)
+
+    mse_cal = mean_squared_error(y_true_val, y_pred_val_cal)
+
+    print("\nCalibration 1-step trên tập validation:")
+    print(f"  a = {cal.intercept_:.6e}, b = {cal.coef_[0]:.6f}")
+    print(f"  MSE trước calibration: {m0['mse']:.8f}")
+    print(f"  MSE sau   calibration: {mse_cal:.8f}")
+
         # ============================================================
     # Bước 8: multi step validation mô phỏng đúng pipeline submit
     # ============================================================
@@ -122,7 +136,6 @@ def main() -> None:
     max_future_in_val = max(len(feat_df) - idx - 1 for idx in val_idx)
 
     if max_future_in_val < 5:
-        # Quá ít điểm tương lai để làm multi step validation
         raise RuntimeError(
             f"Không đủ dữ liệu tương lai cho validation (max_future_in_val={max_future_in_val})"
         )
@@ -157,7 +170,6 @@ def main() -> None:
     all_pred_rets = []
     all_true_rets = []
     all_true_prices = []
-    all_model_prices_uncal = []
     all_naive_prices = []
     anchor_last_prices = []
 
@@ -189,7 +201,7 @@ def main() -> None:
 
         df_hist = df.iloc[: df_anchor_idx + 1]
 
-        # Dự đoán multi step returns từ anchor
+        # Dự đoán multi step returns từ anchor (raw model output)
         pred_rets = forecast_future_returns(
             model=model_anchor,
             scaler=scaler,
@@ -208,50 +220,40 @@ def main() -> None:
 
         last_price = df_hist["close"].iloc[-1]
 
-        # Xây dựng price path từ returns
-        price_true_path = returns_to_prices(last_price=last_price, future_returns=true_rets)
-        price_model_uncal_path = returns_to_prices(last_price=last_price, future_returns=pred_rets)
-        price_naive_path = np.full_like(price_true_path, last_price, dtype=float)
-
+        # Lưu lại để dùng sau
         all_pred_rets.append(pred_rets)
         all_true_rets.append(true_rets)
-        all_true_prices.append(price_true_path)
-        all_model_prices_uncal.append(price_model_uncal_path)
-        all_naive_prices.append(price_naive_path)
+        all_true_prices.append(
+            returns_to_prices(last_price=last_price, future_returns=true_rets)
+        )
+        all_naive_prices.append(
+            np.full(val_horizon, last_price, dtype=float)
+        )
         anchor_last_prices.append(last_price)
 
     if len(all_pred_rets) == 0:
         raise RuntimeError("Không có anchor hợp lệ để multi step validation")
 
 
+
     # Gộp các anchor lại
     y_true_flat = np.concatenate(all_true_rets)
     y_pred_flat = np.concatenate(all_pred_rets)
 
+        # =========================================
+    # Bước 9: dùng calibration 1-step cho multi step,
+    #         đánh giá price path và tìm best ensemble weight
     # =========================================
-    # Bước 9: calibration trên multi step returns
-    # =========================================
-    print("\nCalibrating return predictions trên multi step validation:")
+    print("\nĐánh giá multi step PRICE MSE với calibration 1-step:")
 
-    cal = LinearRegression()
-    cal.fit(y_pred_flat.reshape(-1, 1), y_true_flat)
-    y_pred_cal_flat = cal.predict(y_pred_flat.reshape(-1, 1))
-
-    mse_before_cal = mean_squared_error(y_true_flat, y_pred_flat)
-    mse_after_cal = mean_squared_error(y_true_flat, y_pred_cal_flat)
-
-    print(f"Calibration coefficients (multi step): a={cal.intercept_:.6e}, b={cal.coef_[0]:.6f}")
-    print(f"Return MSE trước calibration: {mse_before_cal:.8f}")
-    print(f"Return MSE sau   calibration: {mse_after_cal:.8f}")
-
-    # Áp calibration lên từng anchor để tính price path
     all_model_prices_cal = []
     for preds_anchor, last_price in zip(all_pred_rets, anchor_last_prices):
         preds_cal = cal.predict(preds_anchor.reshape(-1, 1)).reshape(-1)
-        price_model_cal_path = returns_to_prices(last_price=last_price, future_returns=preds_cal)
+        price_model_cal_path = returns_to_prices(
+            last_price=last_price, future_returns=preds_cal
+        )
         all_model_prices_cal.append(price_model_cal_path)
 
-    # Gộp price path để đánh giá
     prices_true_flat = np.concatenate(all_true_prices)
     prices_model_cal_flat = np.concatenate(all_model_prices_cal)
     prices_naive_flat = np.concatenate(all_naive_prices)
@@ -259,9 +261,22 @@ def main() -> None:
     mse_price_naive = mean_squared_error(prices_true_flat, prices_naive_flat)
     mse_price_model = mean_squared_error(prices_true_flat, prices_model_cal_flat)
 
-    print("\nValidation multi step PRICE MSE:")
-    print(f"  Naive:  {mse_price_naive:.6f}")
-    print(f"  Model (calibrated):  {mse_price_model:.6f}")
+    print(f"  Naive PRICE MSE: {mse_price_naive:.6f}")
+    print(f"  Model (calibrated 1-step) PRICE MSE: {mse_price_model:.6f}")
+
+    # Tìm best_w trên multi step price path
+    best_w = 0.0
+    best_price_mse = np.inf
+    for w in np.linspace(0.0, 1.0, 21):
+        p_blend = w * prices_naive_flat + (1.0 - w) * prices_model_cal_flat
+        mse_blend = mean_squared_error(prices_true_flat, p_blend)
+        if mse_blend < best_price_mse:
+            best_price_mse = mse_blend
+            best_w = w
+
+    print("\nBest ensemble weight trên multi step price validation (dùng cal 1-step):")
+    print(f"  w_naive = {best_w:.2f}, w_model = {1.0 - best_w:.2f}, MSE = {best_price_mse:.6f}")
+
 
     # =========================================
     # Bước 10: ensemble trên multi step price path
@@ -304,10 +319,8 @@ def main() -> None:
 
     # Chuyển thành path giá theo model
     last_price = df["close"].iloc[-1]
-    price_future_model = returns_to_prices(
-        last_price=last_price,
-        future_returns=future_returns_cal,
-    )
+    price_future_model = returns_to_prices(last_price=last_price, future_returns=future_returns_cal)
+
 
     # Path giá naive: luôn giữ nguyên giá cuối cùng
     price_future_naive = np.full_like(price_future_model, last_price, dtype=float)
