@@ -83,11 +83,19 @@ def main():
 
     # 6. Feature importance on validation
     importances = compute_feature_importance(base_model, X_val, y_val, n_repeats=10)
-    top_features = select_top_k_features(importances, used_feature_names, TOP_K_FEATURES)
+
+    # Use the actual columns of X_val so lengths must match permutation_importance
+    feature_names_val = list(X_val.columns)
+
+    print(f"Permutation importance: n_features={len(feature_names_val)}, "
+        f"importances_len={len(importances)}")
+
+    top_features = select_top_k_features(importances, feature_names_val, TOP_K_FEATURES)
 
     print("Top features:")
     for f in top_features:
         print("  ", f)
+
 
     # 7. Restrict to core features
     X_train_core = filter_feature_matrix(X_train, top_features)

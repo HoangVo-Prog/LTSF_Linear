@@ -16,6 +16,7 @@ def compute_feature_importance(
     result = permutation_importance(
         model.model, X_val, y_val, n_repeats=n_repeats, random_state=random_state
     )
+    # shape: (n_features,)
     return result.importances_mean
 
 
@@ -24,27 +25,17 @@ def select_top_k_features(
     feature_names: List[str],
     k: int,
 ) -> List[str]:
-    # Defensive: align lengths
-    n_imp = len(importances)
-    n_feat = len(feature_names)
-    n = min(k, n_imp, n_feat)
-
-    if n_imp != n_feat:
-        print(
-            f"[Warning] importances length {n_imp} != feature_names length {n_feat}. "
-            f"Using first {n} features to align."
+    if len(importances) != len(feature_names):
+        raise ValueError(
+            f"importances length {len(importances)} "
+            f"!= feature_names length {len(feature_names)}"
         )
 
-    # Sort indices by importance descending
     idx_sorted = np.argsort(importances)[::-1]
+    k = min(k, len(idx_sorted))
+    top_idx = idx_sorted[:k]
 
-    # Clip to available features
-    top_idx = idx_sorted[:n]
-
-    # Also clip feature_names if lengths differ
-    safe_feature_names = feature_names[:n_imp]
-
-    return [safe_feature_names[i] for i in top_idx]
+    return [feature_names[i] for i in top_idx]
 
 
 def filter_feature_matrix(X, selected_features: List[str]):
