@@ -14,6 +14,20 @@ from ensemble import (
     tune_ensemble_shrinkage,
 )
 
+import warnings
+import numpy as np
+import pandas as pd
+
+# Disable numpy invalid warnings
+np.seterr(all="ignore")
+
+# Disable pandas warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+import pandas as pd
+warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
+
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,8 +63,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     df_target["y_direct"] = y_direct
 
     # 4. Define feature_cols ban đầu
-    drop_cols = ["time", "close", "lp", "y_direct"]
-    feature_cols_all = [c for c in df_target.columns if c not in drop_cols]
+    num_cols = df_target.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols_all = [c for c in num_cols if c != "y_direct"]
 
     # 5. Time series CV folds
     folds = make_folds(df_target["time"], n_folds=3, horizon=HORIZON)

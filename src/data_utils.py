@@ -15,14 +15,25 @@ def load_data(path: str) -> pd.DataFrame:
 
 
 def add_base_series(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Thêm các series cơ bản: lp, ret_1d, vol_raw, vol_log.
-    """
     df = df.copy()
-    df["lp"] = np.log(df["close"])
+
+    # Giá: clip nhỏ nhất > 0 để tránh log(0) hoặc log giá âm
+    close_safe = pd.to_numeric(df["close"], errors="coerce")
+    close_safe = close_safe.clip(lower=1e-6)
+    df["lp"] = np.log(close_safe)
+
+    # Return 1d trên lp
     df["ret_1d"] = df["lp"].diff(1)
-    df["vol_raw"] = df["volume"]
-    df["vol_log"] = np.log((df["volume"] + 1.0) / (df["volume"].shift(1) + 1.0))
+
+    # Volume thô
+    vol_safe = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+    df["vol_raw"] = vol_safe
+
+    # Volume log: (vol_t + 1) / (vol_{t-1} + 1), clip để tránh chia cho 0
+    vol_curr = (vol_safe + 1.0).clip(lower=1e-6)
+    vol_prev = (vol_safe.shift(1) + 1.0).clip(lower=1e-6)
+    df["vol_log"] = np.log(vol_curr / vol_prev)
+
     return df
 
 
