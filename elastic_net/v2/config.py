@@ -11,7 +11,7 @@ CONFIG: Dict[str, object] = {
     # Ngày bắt đầu tập validation
     # - Dữ liệu trước ngày này dùng để train
     # - Dữ liệu từ ngày này trở đi dùng để evaluate 1-step-ahead
-    "val_start": "2025-01-01",
+    "val_start": "2024-01-01",
 
     # Quantile để winsorize returns
     "clip_lower_q": 0.01,
