@@ -94,6 +94,10 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     return [{}]
 
 
+def mse(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.mean((a - b) ** 2))
+
+
 def evaluate_model_one_fold_direct(
     df_direct: pd.DataFrame,
     model: Direct100Model,
@@ -102,31 +106,29 @@ def evaluate_model_one_fold_direct(
     horizon: int = HORIZON,
 ) -> float:
     """
-    Train model trên fold, tính endpoint MSE trên validation.
+    Train model trên fold, evaluate MSE trên y_direct (100d log return),
+    dùng toàn bộ hàng trong val_mask.
     """
-    lp = df_direct["lp"].values
-
     train_mask = fold["train_mask"]
-    val_eval_start_indices = fold["val_eval_start_indices"]
+    val_mask = fold["val_mask"]
 
     df_train = df_direct.loc[train_mask]
+    df_val = df_direct.loc[val_mask]
+
+    if df_val.empty:
+        # nếu vì lý do gì đó fold này không có validation, coi như rất tệ
+        return np.inf
+
     X_train = df_train[feature_cols]
     y_train = df_train["y_direct"].values
 
+    X_val = df_val[feature_cols]
+    y_val = df_val["y_direct"].values
+
     model.fit(X_train, y_train)
+    y_hat = model.predict_100day_return(X_val)
 
-    X_val_eval = df_direct.loc[val_eval_start_indices, feature_cols]
-    R_hat = model.predict_100day_return(X_val_eval)
-
-    price_true_T, price_hat_T = compute_price_endpoint_from_R(
-        lp=lp,
-        start_indices=val_eval_start_indices,
-        R_hat=R_hat,
-        horizon=horizon,
-    )
-
-    return mse(price_true_T, price_hat_T)
-
+    return mse(y_val, y_hat)
 
 def tune_model_direct(
     model_name: str,
@@ -185,40 +187,40 @@ def collect_validation_predictions_direct(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Chạy lại CV với best_config để collect:
-      - price_true_all: shape (N_total,)
-      - price_hat_all: shape (N_total,) cho model này
-    Gom tất cả fold lại.
+      - y_true_all: shape (N_total,)  = y_direct thực
+      - y_hat_all:  shape (N_total,)  = dự báo log return 100d
     """
     ModelClass = MODEL_REGISTRY[model_name]
-    lp = df_direct["lp"].values
 
     all_true = []
     all_hat = []
 
     for fold in folds:
         train_mask = fold["train_mask"]
-        val_eval_start_indices = fold["val_eval_start_indices"]
+        val_mask = fold["val_mask"]
 
         df_train = df_direct.loc[train_mask]
+        df_val = df_direct.loc[val_mask]
+
+        if df_val.empty:
+            continue
+
         X_train = df_train[feature_cols]
         y_train = df_train["y_direct"].values
 
+        X_val = df_val[feature_cols]
+        y_val = df_val["y_direct"].values
+
         model = ModelClass(best_config)
         model.fit(X_train, y_train)
+        y_hat = model.predict_100day_return(X_val)
 
-        X_val_eval = df_direct.loc[val_eval_start_indices, feature_cols]
-        R_hat = model.predict_100day_return(X_val_eval)
+        all_true.append(y_val)
+        all_hat.append(y_hat)
 
-        price_true_T, price_hat_T = compute_price_endpoint_from_R(
-            lp=lp,
-            start_indices=val_eval_start_indices,
-            R_hat=R_hat,
-            horizon=horizon,
-        )
+    if not all_true:
+        raise RuntimeError("No validation samples collected for ensemble")
 
-        all_true.append(price_true_T)
-        all_hat.append(price_hat_T)
-
-    price_true_all = np.concatenate(all_true)
-    price_hat_all = np.concatenate(all_hat)
-    return price_true_all, price_hat_all
+    y_true_all = np.concatenate(all_true)
+    y_hat_all = np.concatenate(all_hat)
+    return y_true_all, y_hat_all
