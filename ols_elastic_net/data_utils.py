@@ -1,6 +1,7 @@
 # data_utils.py
 
 import pandas as pd
+import numpy as np 
 from typing import Tuple
 from config import TRAIN_CSV, TRAIN_END_DATE
 
@@ -10,7 +11,7 @@ def load_price_data(csv_path: str = TRAIN_CSV) -> pd.DataFrame:
     df["time"] = pd.to_datetime(df["time"])
     df = df.sort_values("time").reset_index(drop=True)
     df["t"] = df.index.astype(int)
-    df["log_price"] = (df["close"] + 1e-8).map(float).pipe(lambda s: (s).pipe(lambda x: x).apply(lambda v: __import__("math").log(v)))
+    df["log_price"] = np.log(df["close"].astype(float) + 1e-8)
     return df
 
 

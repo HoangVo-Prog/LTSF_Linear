@@ -32,9 +32,9 @@ def main():
     print(f"Train period: {train_df['time'].min()} -> {train_df['time'].max()}, n={len(train_df)}")
     print(f"Val period:   {val_df['time'].min()} -> {val_df['time'].max()}, n={len(val_df)}")
 
-    # 2. Fit trend model on train only
+    # 2. Fit trend model on full history (2020–2025)
     trend_model = TrendModel(degree=TREND_POLY_DEGREE)
-    trend_model.fit(train_df)
+    trend_model.fit(df)
 
     # 3. Add trend and residual, then technical features for full data
     df_trend_all = trend_model.add_trend_and_residual(df)

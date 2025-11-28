@@ -31,9 +31,7 @@ def forecast_future_prices(
     for _ in range(steps):
         df_hist = df_hist.sort_values("time").reset_index(drop=True)
         df_hist["t"] = df_hist.index.astype(int)
-        df_hist["log_price"] = (df_hist["close"] + 1e-8).map(float).pipe(
-            lambda s: s.apply(lambda v: __import__("math").log(v))
-        )
+        df_hist["log_price"] = np.log(df_hist["close"].astype(float) + 1e-8)
 
         # trend and resid
         df_trend = trend_model.add_trend_and_residual(df_hist)
@@ -55,7 +53,14 @@ def forecast_future_prices(
         trend_next = trend_model.predict_on_index(np.array([t_next]))[0]
 
         log_price_next = trend_next + resid_next
+
+        # Clip to avoid exp overflow and absurd prices
+        log_price_next = float(
+            np.clip(log_price_next, np.log(1.0), np.log(1e4))
+        )
+
         price_next = float(np.exp(log_price_next))
+
 
         # next date is last time plus 1 day
         next_time = df_hist["time"].iloc[-1] + pd.Timedelta(days=1)
