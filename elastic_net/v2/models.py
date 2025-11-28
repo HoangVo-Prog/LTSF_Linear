@@ -26,7 +26,7 @@ def _make_elasticnet(alpha: float, l1_ratio: float, random_state: int) -> Elasti
 
 
 # =========================================
-# Rolling training - mỗi điểm thời gian train trên quá khứ rồi dự đoán bước tiếp
+# Rolling training 1-step-ahead
 # =========================================
 
 def rolling_elasticnet_forecast(
@@ -108,10 +108,24 @@ def fit_final_elasticnet(
 # =========================================
 
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
-    """Tính MSE và MAE."""
+    """Tính MSE và MAE trên return."""
     mse = mean_squared_error(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
     return {"mse": mse, "mae": mae}
+
+
+def price_mse_from_returns(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    price_t: np.ndarray,
+) -> float:
+    """
+    Tính MSE trên PRICE 1-step-ahead từ return và giá hiện tại.
+    price_t là giá tại thời điểm t, y_true và y_pred là return của t -> t+1.
+    """
+    price_tp1_true = price_t * np.exp(y_true)
+    price_tp1_pred = price_t * np.exp(y_pred)
+    return mean_squared_error(price_tp1_true, price_tp1_pred)
 
 
 # =========================================
@@ -122,6 +136,7 @@ def _grid_search_elasticnet_mse(
     X_all_scaled: np.ndarray,
     y_all: np.ndarray,
     val_mask: np.ndarray,
+    price_all: np.ndarray,
     window_sizes: Iterable[int],
     window_types: Iterable[str],
     alphas: Iterable[float],
@@ -137,7 +152,7 @@ def _grid_search_elasticnet_mse(
 
     Mỗi cấu hình:
       - Chạy rolling forecast trên toàn bộ chuỗi
-      - Chỉ tính MSE MAE trên phần val_mask
+      - Chỉ tính MSE PRICE và MAE RETURN trên phần val_mask
     """
     records: List[Dict[str, float]] = []
 
@@ -157,12 +172,15 @@ def _grid_search_elasticnet_mse(
                     mask = val_mask & ~np.isnan(preds_all)
                     n_val = int(mask.sum())
                     if n_val == 0:
-                        mse = np.nan
-                        mae = np.nan
+                        mse_price = np.nan
+                        mae_ret = np.nan
                     else:
-                        metrics = evaluate_predictions(y_all[mask], preds_all[mask])
-                        mse = metrics["mse"]
-                        mae = metrics["mae"]
+                        mse_price = price_mse_from_returns(
+                            y_true=y_all[mask],
+                            y_pred=preds_all[mask],
+                            price_t=price_all[mask],
+                        )
+                        mae_ret = mean_absolute_error(y_all[mask], preds_all[mask])
 
                     records.append(
                         {
@@ -171,13 +189,13 @@ def _grid_search_elasticnet_mse(
                             "alpha": a,
                             "l1_ratio": l1,
                             "n_val": n_val,
-                            "mse": mse,
-                            "mae": mae,
+                            "mse_price": mse_price,
+                            "mae_ret": mae_ret,
                         }
                     )
 
     df = pd.DataFrame(records)
-    df = df.sort_values(["mse", "mae"], ascending=[True, True]).reset_index(drop=True)
+    df = df.sort_values(["mse_price", "mae_ret"], ascending=[True, True]).reset_index(drop=True)
     best_row = df.iloc[0].to_dict()
     best_config = {
         "window_size": int(best_row["window_size"]),
@@ -192,6 +210,7 @@ def grid_search_window_and_reg(
     X_all_scaled: np.ndarray,
     y_all: np.ndarray,
     val_mask: np.ndarray,
+    price_all: np.ndarray,
     seed: int = 42,
 ) -> Tuple[pd.DataFrame, Dict[str, object]]:
     """
@@ -210,6 +229,7 @@ def grid_search_window_and_reg(
         X_all_scaled=X_all_scaled,
         y_all=y_all,
         val_mask=val_mask,
+        price_all=price_all,
         window_sizes=window_sizes,
         window_types=window_types,
         alphas=alphas,
@@ -222,6 +242,7 @@ def grid_search_alpha_l1(
     X_all_scaled: np.ndarray,
     y_all: np.ndarray,
     val_mask: np.ndarray,
+    price_all: np.ndarray,
     base_window_size: int,
     base_window_type: str,
     seed: int = 42,
@@ -237,6 +258,7 @@ def grid_search_alpha_l1(
         X_all_scaled=X_all_scaled,
         y_all=y_all,
         val_mask=val_mask,
+        price_all=price_all,
         window_sizes=[base_window_size],
         window_types=[base_window_type],
         alphas=alphas,
