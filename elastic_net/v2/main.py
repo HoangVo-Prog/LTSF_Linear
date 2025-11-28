@@ -110,190 +110,75 @@ def main() -> None:
     cal.fit(y_pred_val.reshape(-1, 1), y_true_val)
     y_pred_val_cal = cal.predict(y_pred_val.reshape(-1, 1)).reshape(-1)
 
-    mse_cal = mean_squared_error(y_true_val, y_pred_val_cal)
+    mse_before = mean_squared_error(y_true_val, y_pred_val)
+    mse_after = mean_squared_error(y_true_val, y_pred_val_cal)
 
     print("\nCalibration 1-step trên tập validation:")
     print(f"  a = {cal.intercept_:.6e}, b = {cal.coef_[0]:.6f}")
-    print(f"  MSE trước calibration: {m0['mse']:.8f}")
-    print(f"  MSE sau   calibration: {mse_cal:.8f}")
-
-        # ============================================================
-    # Bước 8: multi step validation mô phỏng đúng pipeline submit
-    # ============================================================
-    print("\nMulti step validation mô phỏng pipeline submit:")
-
-    # Horizon mong muốn từ config
-    val_horizon_cfg = int(CONFIG.get("val_horizon", 50))
-    val_num_anchors = int(CONFIG.get("val_num_anchors", 10))
-
-    times_all = feat_df["time"].values
-    val_idx = np.where(feat_df["is_val"].values)[0]
-
-    if len(val_idx) == 0:
-        raise RuntimeError("Không có index nào thuộc validation trong feat_df")
-
-    # Với mỗi điểm trong validation xem còn bao nhiêu ngày phía sau
-    max_future_in_val = max(len(feat_df) - idx - 1 for idx in val_idx)
-
-    if max_future_in_val < 5:
-        raise RuntimeError(
-            f"Không đủ dữ liệu tương lai cho validation (max_future_in_val={max_future_in_val})"
-        )
-
-    # Horizon thực tế là min(horizon mong muốn, số ngày tương lai tối đa)
-    val_horizon = min(val_horizon_cfg, max_future_in_val)
-    if val_horizon < val_horizon_cfg:
-        print(
-            f"Giảm val_horizon từ {val_horizon_cfg} xuống {val_horizon} "
-            f"do giới hạn độ dài dữ liệu"
-        )
-
-    # Chỉ chọn anchor sao cho còn đủ val_horizon ngày phía sau
-    max_anchor_idx = len(feat_df) - val_horizon - 1
-    val_idx = val_idx[val_idx <= max_anchor_idx]
-
-    if len(val_idx) == 0:
-        raise RuntimeError(
-            "Không đủ dữ liệu validation để chạy multi step validation "
-            f"ngay cả với val_horizon={val_horizon}"
-        )
-
-    # Lấy tối đa val_num_anchors anchor, trải đều trong đoạn validation
-    if len(val_idx) > val_num_anchors:
-        anchor_indices = np.linspace(0, len(val_idx) - 1, val_num_anchors).round().astype(int)
-        anchor_idx_list = val_idx[anchor_indices]
-    else:
-        anchor_idx_list = val_idx
-
-    print(f"Số anchor được dùng cho multi step validation: {len(anchor_idx_list)}")
-
-    all_pred_rets = []
-    all_true_rets = []
-    all_true_prices = []
-    all_naive_prices = []
-    anchor_last_prices = []
-
-    for anchor_idx in anchor_idx_list:
-        anchor_time = feat_df.loc[anchor_idx, "time"]
-        print(f"  Anchor tại ngày: {anchor_time}")
-
-        # Dữ liệu feature và target dùng để train model tại anchor
-        X_hist_scaled = X_all_scaled[: anchor_idx + 1]
-        y_hist = y_all[: anchor_idx + 1]
-
-        # Train static ElasticNet theo đúng fit_final_elasticnet
-        model_anchor = fit_final_elasticnet(
-            X_scaled=X_hist_scaled,
-            y=y_hist,
-            window_size=best_2["window_size"],
-            alpha=best_2["alpha"],
-            l1_ratio=best_2["l1_ratio"],
-            window_type=best_2["window_type"],
-            random_state=CONFIG["seed"],
-        )
-
-        # Map anchor_time sang index trong df gốc
-        df_anchor_idx = df.index[df["time"] == anchor_time]
-        if len(df_anchor_idx) == 0:
-            print("    Không tìm thấy anchor trong df gốc, bỏ qua.")
-            continue
-        df_anchor_idx = int(df_anchor_idx[0])
-
-        df_hist = df.iloc[: df_anchor_idx + 1]
-
-        # Dự đoán multi step returns từ anchor (raw model output)
-        pred_rets = forecast_future_returns(
-            model=model_anchor,
-            scaler=scaler,
-            df=df_hist,
-            steps=val_horizon,
-        )
-
-        # True future returns (raw ret_1d) và giá
-        df_future = df.iloc[df_anchor_idx + 1 : df_anchor_idx + 1 + val_horizon]
-        true_rets = df_future["ret_1d"].values.astype(float)
-        true_prices = df_future["close"].values.astype(float)
-
-        if len(true_rets) < val_horizon:
-            print("    Không đủ dữ liệu tương lai cho horizon tại anchor này, bỏ qua.")
-            continue
-
-        last_price = df_hist["close"].iloc[-1]
-
-        # Lưu lại để dùng sau
-        all_pred_rets.append(pred_rets)
-        all_true_rets.append(true_rets)
-        all_true_prices.append(
-            returns_to_prices(last_price=last_price, future_returns=true_rets)
-        )
-        all_naive_prices.append(
-            np.full(val_horizon, last_price, dtype=float)
-        )
-        anchor_last_prices.append(last_price)
-
-    if len(all_pred_rets) == 0:
-        raise RuntimeError("Không có anchor hợp lệ để multi step validation")
-
-
-
-    # Gộp các anchor lại
-    y_true_flat = np.concatenate(all_true_rets)
-    y_pred_flat = np.concatenate(all_pred_rets)
-
+    print(f"  MSE trước calibration: {mse_before:.8f}")
+    print(f"  MSE sau   calibration: {mse_after:.8f}")
+    
         # =========================================
-    # Bước 9: dùng calibration 1-step cho multi step,
-    #         đánh giá price path và tìm best ensemble weight
+    # Tính blend weight trên 1-step PRICE
     # =========================================
-    print("\nĐánh giá multi step PRICE MSE với calibration 1-step:")
+    print("\nTối ưu ensemble weight trên PRICE 1-step:")
 
-    all_model_prices_cal = []
-    for preds_anchor, last_price in zip(all_pred_rets, anchor_last_prices):
-        preds_cal = cal.predict(preds_anchor.reshape(-1, 1)).reshape(-1)
-        price_model_cal_path = returns_to_prices(
-            last_price=last_price, future_returns=preds_cal
-        )
-        all_model_prices_cal.append(price_model_cal_path)
+    # Các index trong validation dùng cho đánh giá
+    val_idx_all = np.where(mask_val_used)[0]
 
-    prices_true_flat = np.concatenate(all_true_prices)
-    prices_model_cal_flat = np.concatenate(all_model_prices_cal)
-    prices_naive_flat = np.concatenate(all_naive_prices)
+    price_true_list = []
+    price_naive_list = []
+    price_model_list = []
 
-    mse_price_naive = mean_squared_error(prices_true_flat, prices_naive_flat)
-    mse_price_model = mean_squared_error(prices_true_flat, prices_model_cal_flat)
+    for idx_feat, y_pred_raw, y_pred_cal in zip(
+        val_idx_all, y_pred_val, y_pred_val_cal
+    ):
+        t_time = feat_df.loc[idx_feat, "time"]
+        df_idx_arr = df.index[df["time"] == t_time]
+        if len(df_idx_arr) == 0:
+            continue
+        df_idx = int(df_idx_arr[0])
 
-    print(f"  Naive PRICE MSE: {mse_price_naive:.6f}")
-    print(f"  Model (calibrated 1-step) PRICE MSE: {mse_price_model:.6f}")
+        # Cần có giá ngày t và t+1
+        if df_idx + 1 >= len(df):
+            continue
 
-    # Tìm best_w trên multi step price path
+        price_t = float(df["close"].iloc[df_idx])
+        price_next_true = float(df["close"].iloc[df_idx + 1])
+
+        # Naive: giữ nguyên giá t
+        price_next_naive = price_t
+
+        # Model: dùng return đã calibrated một bước
+        price_next_model = price_t * float(np.exp(y_pred_cal))
+
+        price_true_list.append(price_next_true)
+        price_naive_list.append(price_next_naive)
+        price_model_list.append(price_next_model)
+
+    price_true_arr = np.array(price_true_list, dtype=float)
+    price_naive_arr = np.array(price_naive_list, dtype=float)
+    price_model_arr = np.array(price_model_list, dtype=float)
+
+    if len(price_true_arr) == 0:
+        raise RuntimeError("Không có đủ điểm để tối ưu ensemble 1-step")
+
+    # Grid search đơn giản w trong [0, 1]
     best_w = 0.0
-    best_price_mse = np.inf
+    best_mse = np.inf
     for w in np.linspace(0.0, 1.0, 21):
-        p_blend = w * prices_naive_flat + (1.0 - w) * prices_model_cal_flat
-        mse_blend = mean_squared_error(prices_true_flat, p_blend)
-        if mse_blend < best_price_mse:
-            best_price_mse = mse_blend
+        price_blend = w * price_naive_arr + (1.0 - w) * price_model_arr
+        mse_w = mean_squared_error(price_true_arr, price_blend)
+        if mse_w < best_mse:
+            best_mse = mse_w
             best_w = w
 
-    print("\nBest ensemble weight trên multi step price validation (dùng cal 1-step):")
-    print(f"  w_naive = {best_w:.2f}, w_model = {1.0 - best_w:.2f}, MSE = {best_price_mse:.6f}")
+    print(f"  Naive PRICE MSE: {mean_squared_error(price_true_arr, price_naive_arr):.6f}")
+    print(f"  Model PRICE MSE: {mean_squared_error(price_true_arr, price_model_arr):.6f}")
+    print(f"  Best w_naive = {best_w:.2f}, w_model = {1.0 - best_w:.2f}, MSE = {best_mse:.6f}")
 
 
-    # =========================================
-    # Bước 10: ensemble trên multi step price path
-    # =========================================
-    best_w = 0.0
-    best_price_mse = np.inf
-    for w in np.linspace(0.0, 1.0, 21):
-        p_blend = w * prices_naive_flat + (1.0 - w) * prices_model_cal_flat
-        mse_blend = mean_squared_error(prices_true_flat, p_blend)
-        if mse_blend < best_price_mse:
-            best_price_mse = mse_blend
-            best_w = w
-
-    print("\nBest ensemble weight trên multi step price validation:")
-    print(f"  w_naive = {best_w:.2f}, w_model = {1.0 - best_w:.2f}, MSE = {best_price_mse:.6f}")
-
-        # Bước 11: fit model cuối cùng trên toàn bộ dữ liệu
+    # Bước 11: fit ElasticNet cuối cùng trên toàn bộ dữ liệu
     print("\nFit ElasticNet cuối cùng trên toàn bộ dữ liệu:")
     final_model = fit_final_elasticnet(
         X_scaled=X_all_scaled,
@@ -314,18 +199,21 @@ def main() -> None:
         steps=CONFIG["forecast_steps"],
     )
 
-    # Áp calibration cho chuỗi return tương lai (dùng cal đã fit trên multi step)
+    # Áp calibration 1-step cho chuỗi return tương lai
+    # (dùng cal đã fit trên toàn bộ validation)
     future_returns_cal = cal.predict(future_returns_raw.reshape(-1, 1)).reshape(-1)
 
     # Chuyển thành path giá theo model
     last_price = df["close"].iloc[-1]
-    price_future_model = returns_to_prices(last_price=last_price, future_returns=future_returns_cal)
+    price_future_model = returns_to_prices(
+        last_price=last_price,
+        future_returns=future_returns_cal,
+    )
 
-
-    # Path giá naive: luôn giữ nguyên giá cuối cùng
+    # Path giá naive: giữ nguyên giá cuối cùng
     price_future_naive = np.full_like(price_future_model, last_price, dtype=float)
 
-    # Ensemble với trọng số đã tối ưu trên multi step validation
+    # Ensemble với trọng số best_w học được từ PRICE 1-step
     price_future_final = best_w * price_future_naive + (1.0 - best_w) * price_future_model
 
     future_signals_df = pd.DataFrame(
@@ -352,6 +240,7 @@ def main() -> None:
     submission.to_csv(submission_path, index=False)
     print("\nSaved submission file to:", submission_path)
     print(submission.head())
+
 
 
 if __name__ == "__main__":

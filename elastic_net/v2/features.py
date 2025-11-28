@@ -130,7 +130,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     feat["month"] = feat["time"].dt.month.astype(int)
 
     # Target: return ngày t+1, dùng raw ret_1d (không clipped)
-    feat["y"] = feat["ret_1d"].shift(-1)
+    feat["y"] = feat["ret_1d_clipped"].shift(-1)
 
     cols = ["time"] + FEATURE_NAMES + ["y"]
     feat = feat[cols]
