@@ -45,6 +45,27 @@ from splits import make_folds, get_test_indices
 from feature_selection import run_feature_selection_direct
 
 
+def drop_na_rows_for_features(
+    df: pd.DataFrame,
+    feature_cols,
+    target_col: str = None,
+) -> pd.DataFrame:
+    """
+    Drop mọi hàng có NaN trong feature_cols (+ target_col nếu có).
+    Dùng trước khi tạo folds để đảm bảo không model nào dính NaN.
+    """
+    cols = list(feature_cols)
+    if target_col is not None and target_col not in cols:
+        cols.append(target_col)
+
+    mask = df[cols].notna().all(axis=1)
+    n_drop = (~mask).sum()
+    if n_drop > 0:
+        print(f"[NaN clean] Dropped {n_drop} rows due to NaNs in features/target")
+    df_clean = df.loc[mask].reset_index(drop=True)
+    return df_clean
+
+
 def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     # 0. Load và base series
     df = load_data(train_csv)
@@ -65,6 +86,13 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     # 4. Define feature_cols ban đầu
     num_cols = df_target.select_dtypes(include=[np.number]).columns.tolist()
     feature_cols_all = [c for c in num_cols if c != "y_direct"]
+    
+    df_target = drop_na_rows_for_features(
+        df_target,
+        feature_cols=feature_cols_all,
+        target_col="y_direct",
+    )
+
 
     # 5. Time series CV folds
     folds = make_folds(df_target["time"], n_folds=3, horizon=HORIZON)
