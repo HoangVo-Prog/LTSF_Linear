@@ -19,10 +19,10 @@ def forecast_future_prices(
     Recursive multi step forecast.
 
     At each step:
-      1) Rebuild trend, residual and features on full current history
+      1) Rebuild features on full current history
       2) Build supervised X, y (y ignored)
       3) Take last feature row and predict next residual
-      4) Shrink residual and combine with *flat* trend for next step
+      4) Use the last *actual* log price as trend anchor, add shrunken residual
       5) Clip log price to [log_clip_low, log_clip_high]
       6) Convert to price, append to history and continue
     """
@@ -52,21 +52,21 @@ def forecast_future_prices(
         # Shrink residual so impact does not explode over many steps
         resid_next = residual_shrink * resid_pred
 
-        # 5. FLAT TREND: assume trend is flat beyond last point
-        #    instead of polynomial extrapolation.
-        trend_last = float(df_trend["trend"].iloc[-1])
-        trend_next = trend_last
+        # 5. Use the last *actual* log price as trend anchor
+        #    This avoids polynomial trend overshoot at the end of sample
+        last_log_price = float(df_hist["log_price"].iloc[-1])
+        trend_next = last_log_price
 
-        # 6. Combine trend and residual in log space and clip
+        # Combine trend anchor and residual in log space and clip
         log_price_next = trend_next + resid_next
         log_price_next = float(
             np.clip(log_price_next, log_clip_low, log_clip_high)
         )
 
-        # 7. Back to price
+        # 6. Back to price
         price_next = float(np.exp(log_price_next))
 
-        # 8. Next date is last time plus 1 day
+        # 7. Next date is last time plus 1 day
         next_time = df_hist["time"].iloc[-1] + pd.Timedelta(days=1)
 
         new_row = {
