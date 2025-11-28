@@ -86,9 +86,8 @@ def main() -> None:
 
     # Bước 7: rolling forecast 1-step trên toàn bộ lịch sử để đánh giá
     preds_all = rolling_elasticnet_forecast(
-        X_all_scaled=X_all_scaled,
-        y_all=y_all,
-        val_mask=np.ones_like(val_mask, dtype=bool),  # forecast cho mọi điểm có thể
+        X=X_all_scaled,
+        y=y_all,
         window_size=best_2["window_size"],
         alpha=best_2["alpha"],
         l1_ratio=best_2["l1_ratio"],
@@ -100,6 +99,7 @@ def main() -> None:
     mask_val_used = val_mask & ~np.isnan(preds_all)
     y_true_val = y_all[mask_val_used]
     y_pred_val = preds_all[mask_val_used]
+
 
     print("\nKết quả 1-step-ahead return trên tập validation (log cho tham khảo):")
     m0 = evaluate_predictions(y_true_val, y_pred_val)
