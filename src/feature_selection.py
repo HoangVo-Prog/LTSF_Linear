@@ -390,14 +390,37 @@ def run_feature_selection_direct(
 
     y = df_direct["y_direct"].values.astype(float)
 
-    selected_features, rank_df = _run_advanced_feature_ranking(
+    # whitelist core features
+    CORE_FEATURES = [
+        "lp", "close", "open", "high", "low",
+        "sma_20", "sma_60", "sma_120", "sma_200",
+        "price_sma20", "price_sma60", "price_sma120", "price_sma200",
+        "ema_5", "ema_12", "ema_20", "ema_26", "ema_50",
+        "ret_120d",
+        "bb_low_20", "bb_up_20", "bb_low_60", "bb_up_60",
+        "dd_60", "dd_120", "dd_200",
+        "month", "month_sin", "month_cos",
+    ]
+
+    core = [f for f in CORE_FEATURES if f in feature_cols]
+    candidate = [f for f in feature_cols if f not in core]
+
+    # top_rest = số feature còn lại cần chọn
+    top_rest = max(0, top_k - len(core))
+    if top_rest == 0 or len(candidate) == 0:
+        # chỉ dùng core
+        rank_df = pd.DataFrame(index=core)
+        return core, rank_df
+
+    selected_rest, rank_df = _run_advanced_feature_ranking(
         df=df_direct,
         y=y,
-        feature_cols=feature_cols,
+        feature_cols=candidate,
         folds=folds,
-        top_k=top_k,
+        top_k=top_rest,
     )
 
+    selected_features = core + selected_rest
     return selected_features, rank_df
 
 
