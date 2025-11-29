@@ -4,9 +4,15 @@ from typing import List, Tuple, Dict
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import ElasticNet
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
 
 from config import TOP_K_FEATURES, RANDOM_STATE
+
+try:
+    import xgboost as xgb
+except ImportError:
+    xgb = None
 
 
 def build_selection_target_from_multi(Y_multi: np.ndarray, mode: str = "sum") -> np.ndarray:
@@ -28,84 +34,179 @@ def build_selection_target_from_multi(Y_multi: np.ndarray, mode: str = "sum") ->
         raise ValueError(f"Unknown mode for selection target: {mode}")
 
 
-def compute_feature_importance_per_fold(
+def _normalize_importance(
+    imp: pd.Series,
+    clip_negative: bool = True,
+) -> pd.Series:
+    """
+    Chuẩn hóa importance về [0,1] với max = 1.
+    Nếu clip_negative True, các giá trị âm bị đặt về 0.
+    """
+    s = imp.copy()
+    s = s.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    if clip_negative:
+        s = s.clip(lower=0.0)
+
+    max_val = s.abs().max()
+    if max_val <= 0:
+        return s * 0.0
+    return s / max_val
+
+
+def compute_feature_importances_all_models_per_fold(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     X_val: pd.DataFrame,
     y_val: np.ndarray,
-    base_model: ElasticNet = None,
-) -> pd.Series:
+    base_model_enet: ElasticNet = None,
+) -> Dict[str, pd.Series]:
     """
-    Train baseline ElasticNet và compute permutation importance trên X_val.
+    Tính importance từ nhiều baseline model trên một fold:
+      - ElasticNet + permutation importance
+      - RandomForestRegressor feature_importances_
+      - XGBRegressor feature_importances_ (nếu có)
 
-    base_model:
-      - nếu None sẽ dùng ElasticNet với default nhẹ.
-      - nếu không, dùng bản copy cấu hình bạn truyền vào.
+    Trả về dict: { "enet": series, "rf": series, "xgb": series(optional) }
     """
-    if base_model is None:
-        model = ElasticNet(
+    importances: Dict[str, pd.Series] = {}
+
+    # 1. ElasticNet + permutation importance
+    if base_model_enet is None:
+        enet = ElasticNet(
             alpha=1e-3,
             l1_ratio=0.5,
             random_state=RANDOM_STATE,
             max_iter=2000,
         )
     else:
-        # clone đơn giản
-        model = ElasticNet(
-            alpha=base_model.alpha,
-            l1_ratio=base_model.l1_ratio,
+        enet = ElasticNet(
+            alpha=base_model_enet.alpha,
+            l1_ratio=base_model_enet.l1_ratio,
             random_state=RANDOM_STATE,
-            max_iter=base_model.max_iter,
+            max_iter=base_model_enet.max_iter,
         )
 
-    model.fit(X_train, y_train)
-
+    enet.fit(X_train, y_train)
     result = permutation_importance(
-        model,
+        enet,
         X_val,
         y_val,
         n_repeats=10,
         random_state=RANDOM_STATE,
         scoring="neg_mean_squared_error",
     )
-    importances = pd.Series(result.importances_mean, index=X_val.columns)
+    imp_enet = pd.Series(result.importances_mean, index=X_val.columns)
+    importances["enet"] = _normalize_importance(imp_enet, clip_negative=True)
+
+    # 2. RandomForestRegressor
+    rf = RandomForestRegressor(
+        n_estimators=300,
+        max_depth=None,
+        min_samples_leaf=1,
+        max_features="sqrt",
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+    )
+    rf.fit(X_train, y_train)
+    imp_rf = pd.Series(rf.feature_importances_, index=X_train.columns)
+    importances["rf"] = _normalize_importance(imp_rf, clip_negative=False)
+
+    # 3. XGBoost nếu có
+    if xgb is not None:
+        xgb_model = xgb.XGBRegressor(
+            objective="reg:squarederror",
+            n_estimators=300,
+            max_depth=3,
+            learning_rate=0.05,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=RANDOM_STATE,
+            tree_method="hist",
+            n_jobs=-1,
+        )
+        xgb_model.fit(X_train.values, y_train)
+        imp_xgb = pd.Series(xgb_model.feature_importances_, index=X_train.columns)
+        importances["xgb"] = _normalize_importance(imp_xgb, clip_negative=False)
+
     return importances
 
 
-def aggregate_feature_importances(
-    per_fold_importances: List[pd.Series],
+def aggregate_feature_importances_multi_model(
+    per_fold_importances: Dict[str, List[pd.Series]],
     min_folds_used: int = 1,
     top_k: int = TOP_K_FEATURES,
 ) -> Tuple[List[str], pd.DataFrame]:
     """
-    Gộp importance giữa các fold, chọn top_k feature và trả về
-    cả bảng ranking chi tiết.
+    Gộp importance từ nhiều baseline model (ElasticNet, RF, XGB) giữa các fold.
+
+    per_fold_importances:
+      dict model_name -> list[pd.Series] (mỗi series là 1 fold)
 
     Output:
-      - selected_features: list tên cột
-      - rank_df: DataFrame có cột:
-          importance_mean, folds_used, rank_score
+      - selected_features: list tên feature
+      - rank_df: DataFrame chi tiết với:
+          enet_importance_mean, rf_importance_mean, xgb_importance_mean,
+          rank_score (trung bình các model)
     """
-    all_features = sorted({f for s in per_fold_importances for f in s.index})
-    n_folds = len(per_fold_importances)
+    model_names = list(per_fold_importances.keys())
+    if len(model_names) == 0:
+        raise ValueError("No model importances passed to aggregate_feature_importances_multi_model")
 
-    imp_mat = pd.DataFrame(index=all_features, columns=range(n_folds), dtype=float)
-    for i, s in enumerate(per_fold_importances):
-        imp_mat[i] = s.reindex(all_features)
-
-    imp_mean = imp_mat.mean(axis=1, skipna=True)
-    folds_used = imp_mat.notna().sum(axis=1)
-
-    rank_score = imp_mean * (folds_used / n_folds)
-    rank_df = pd.DataFrame(
+    # union tất cả feature
+    all_features = sorted(
         {
-            "importance_mean": imp_mean,
-            "folds_used": folds_used,
-            "rank_score": rank_score,
+            f
+            for m in model_names
+            for s in per_fold_importances[m]
+            for f in s.index
         }
     )
 
-    rank_df = rank_df[rank_df["folds_used"] >= min_folds_used]
+    # lưu thống kê theo từng model
+    stats = {}
+    for m in model_names:
+        folds_series = per_fold_importances[m]
+        n_folds_m = len(folds_series)
+
+        imp_mat = pd.DataFrame(index=all_features, columns=range(n_folds_m), dtype=float)
+        for i, s in enumerate(folds_series):
+            imp_mat[i] = s.reindex(all_features)
+
+        imp_mean = imp_mat.mean(axis=1, skipna=True)
+        folds_used = imp_mat.notna().sum(axis=1)
+
+        rank_score_m = imp_mean * (folds_used / max(1, n_folds_m))
+
+        stats[m] = {
+            "importance_mean": imp_mean,
+            "folds_used": folds_used,
+            "rank_score": rank_score_m,
+        }
+
+    # build rank_df tổng hợp
+    rank_df = pd.DataFrame(index=all_features)
+
+    rank_score_list = []
+    for m in model_names:
+        rank_df[f"{m}_importance_mean"] = stats[m]["importance_mean"]
+        rank_df[f"{m}_folds_used"] = stats[m]["folds_used"]
+        rank_df[f"{m}_rank_score"] = stats[m]["rank_score"]
+        rank_score_list.append(stats[m]["rank_score"])
+
+    # final rank_score = mean rank_score của các model
+    rank_df["rank_score"] = pd.concat(rank_score_list, axis=1).mean(axis=1)
+
+    # tổng folds_used = max số fold mà feature xuất hiện ở bất kỳ model nào
+    folds_used_total = None
+    for m in model_names:
+        fu = stats[m]["folds_used"]
+        folds_used_total = fu if folds_used_total is None else fu.combine(folds_used_total, func=np.maximum)
+    rank_df["folds_used_total"] = folds_used_total
+
+    # lọc theo min_folds_used
+    rank_df = rank_df[rank_df["folds_used_total"] >= min_folds_used]
+
+    # sort theo rank_score giảm dần
     rank_df = rank_df.sort_values("rank_score", ascending=False)
 
     selected_features = rank_df.index.tolist()[:top_k]
@@ -134,9 +235,9 @@ def run_feature_selection_direct(
     feature_cols:
       - list tên feature ban đầu
     """
-    per_fold_importances: List[pd.Series] = []
+    per_fold_importances: Dict[str, List[pd.Series]] = {}
 
-    for i, fold in enumerate(folds):
+    for fold in folds:
         train_mask = fold["train_mask"]
         val_mask = fold["val_mask"]
 
@@ -149,17 +250,19 @@ def run_feature_selection_direct(
         X_val = df_val[feature_cols]
         y_val = df_val["y_direct"].values
 
-        imp = compute_feature_importance_per_fold(
+        imp_dict = compute_feature_importances_all_models_per_fold(
             X_train,
             y_train,
             X_val,
             y_val,
-            base_model=base_model_for_importance,
+            base_model_enet=base_model_for_importance,
         )
-        per_fold_importances.append(imp)
 
-    selected_features, rank_df = aggregate_feature_importances(
-        per_fold_importances,
+        for m_name, imp_series in imp_dict.items():
+            per_fold_importances.setdefault(m_name, []).append(imp_series)
+
+    selected_features, rank_df = aggregate_feature_importances_multi_model(
+        per_fold_importances=per_fold_importances,
         min_folds_used=min_folds_used,
         top_k=top_k,
     )
@@ -196,9 +299,9 @@ def run_feature_selection_multi(
     # build scalar target từ multi output
     y_scalar_all = build_selection_target_from_multi(Y_multi, mode=selection_target_mode)
 
-    per_fold_importances: List[pd.Series] = []
+    per_fold_importances: Dict[str, List[pd.Series]] = {}
 
-    for i, fold in enumerate(folds):
+    for fold in folds:
         train_mask = fold["train_mask"]
         val_mask = fold["val_mask"]
 
@@ -211,17 +314,19 @@ def run_feature_selection_multi(
         X_val = df_multi.loc[val_idx, feature_cols]
         y_val = y_scalar_all[val_idx]
 
-        imp = compute_feature_importance_per_fold(
+        imp_dict = compute_feature_importances_all_models_per_fold(
             X_train,
             y_train,
             X_val,
             y_val,
-            base_model=base_model_for_importance,
+            base_model_enet=base_model_for_importance,
         )
-        per_fold_importances.append(imp)
 
-    selected_features, rank_df = aggregate_feature_importances(
-        per_fold_importances,
+        for m_name, imp_series in imp_dict.items():
+            per_fold_importances.setdefault(m_name, []).append(imp_series)
+
+    selected_features, rank_df = aggregate_feature_importances_multi_model(
+        per_fold_importances=per_fold_importances,
         min_folds_used=min_folds_used,
         top_k=top_k,
     )
