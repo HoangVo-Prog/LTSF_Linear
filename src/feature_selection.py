@@ -1,23 +1,16 @@
-# feature_selection.py
-
 from typing import List, Tuple, Dict
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import ElasticNet
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.inspection import permutation_importance
 
-
-from p1.evaluation_direct import compute_endpoint_price_from_direct
-
+from sklearn.linear_model import ElasticNet, LinearRegression
+from sklearn.feature_selection import mutual_info_regression
 
 from config import TOP_K_FEATURES, RANDOM_STATE
 
-try:
-    import xgboost as xgb
-except ImportError:
-    xgb = None
 
+# ============================================================
+# 0. Helper: build scalar target cho multi-output
+# ============================================================
 
 def build_selection_target_from_multi(Y_multi: np.ndarray, mode: str = "sum") -> np.ndarray:
     """
@@ -26,313 +19,391 @@ def build_selection_target_from_multi(Y_multi: np.ndarray, mode: str = "sum") ->
     mode:
       - "sum": tổng return 100 ngày
       - "mean": trung bình return 100 ngày
-      - "endpoint": dùng return endpoint lp_{t+H} - lp_t
+      - "endpoint": dùng return endpoint lp_{t+H} - lp_t (ở đây vẫn là sum)
     """
     if mode == "sum":
         return Y_multi.sum(axis=1)
     elif mode == "mean":
         return Y_multi.mean(axis=1)
     elif mode == "endpoint":
+        # với log-return nhiều bước, endpoint = sum các bước
         return Y_multi.sum(axis=1)
     else:
         raise ValueError(f"Unknown mode for selection target: {mode}")
 
 
-def _normalize_importance(
-    imp: pd.Series,
-    clip_negative: bool = True,
-) -> pd.Series:
-    """
-    Chuẩn hóa importance về [0,1] với max = 1.
-    Nếu clip_negative True, các giá trị âm bị đặt về 0.
-    """
-    s = imp.copy()
-    s = s.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    if clip_negative:
-        s = s.clip(lower=0.0)
+# ============================================================
+# 1. Helper chung cho scoring
+# ============================================================
 
-    max_val = s.abs().max()
-    if max_val <= 0:
-        return s * 0.0
+def _safe_series(values, index) -> pd.Series:
+    s = pd.Series(values, index=index, dtype=float)
+    s = s.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return s
+
+
+def _normalize_score(s: pd.Series) -> pd.Series:
+    """
+    Chuẩn hóa score về [0,1]. Giả định s không âm (MI, |corr|, R2, stability).
+    """
+    s = s.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    max_val = s.max()
+    if max_val is None or max_val <= 0:
+        return pd.Series(0.0, index=s.index)
     return s / max_val
 
 
-def compute_feature_importances_all_models_per_fold(
-    X_train: pd.DataFrame,
-    y_train: np.ndarray,
-    X_val: pd.DataFrame,
-    y_val: np.ndarray,
-    base_model_enet: ElasticNet = None,
-) -> Dict[str, pd.Series]:
+def _safe_corr(x: np.ndarray, y: np.ndarray, min_samples: int = 30) -> float:
     """
-    Tính importance từ nhiều baseline model trên một fold:
-      - ElasticNet + permutation importance
-      - RandomForestRegressor feature_importances_
-      - XGBRegressor feature_importances_ (nếu có)
-
-    Trả về dict: { "enet": series, "rf": series, "xgb": series(optional) }
+    Corr Pearson tuyệt đối giữa 2 vector, xử lý NaN/inf, yêu cầu min_samples.
     """
-    importances: Dict[str, pd.Series] = {}
+    mask = np.isfinite(x) & np.isfinite(y)
+    if mask.sum() < min_samples:
+        return 0.0
 
-    # 1. ElasticNet + permutation importance
-    if base_model_enet is None:
-        enet = ElasticNet(
-            alpha=1e-3,
-            l1_ratio=0.5,
-            random_state=RANDOM_STATE,
-            max_iter=2000,
-        )
-    else:
-        enet = ElasticNet(
-            alpha=base_model_enet.alpha,
-            l1_ratio=base_model_enet.l1_ratio,
-            random_state=RANDOM_STATE,
-            max_iter=base_model_enet.max_iter,
-        )
+    x_m = x[mask] - x[mask].mean()
+    y_m = y[mask] - y[mask].mean()
+    denom = np.sqrt((x_m ** 2).sum()) * np.sqrt((y_m ** 2).sum())
+    if denom <= 0:
+        return 0.0
+    return float((x_m * y_m).sum() / denom)
 
-    enet.fit(X_train, y_train)
-    result = permutation_importance(
-        enet,
-        X_val,
-        y_val,
-        n_repeats=10,
+
+# ============================================================
+# 2. Score 1: Mutual Information với target (smoothed)
+# ============================================================
+
+def _compute_mi_scores(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    y: np.ndarray,
+) -> pd.Series:
+    """
+    Mutual Information giữa mỗi feature và target liên tục y.
+
+    - X: matrix (N, F) các feature (đã fillna)
+    - y: vector (N,)
+    """
+    # y
+    y = np.asarray(y, dtype=float)
+    mask_y = np.isfinite(y)
+    y_clean = y[mask_y]
+
+    X = df[feature_cols].copy()
+    X = X.replace([np.inf, -np.inf], np.nan)
+    medians = X.median(axis=0)
+    X = X.fillna(medians)
+    X = X.iloc[mask_y]
+
+    if len(X) == 0 or len(X) != len(y_clean):
+        return pd.Series(0.0, index=feature_cols, dtype=float)
+
+    mi = mutual_info_regression(
+        X.values,
+        y_clean,
         random_state=RANDOM_STATE,
-        scoring="neg_mean_squared_error",
     )
-    imp_enet = pd.Series(result.importances_mean, index=X_val.columns)
-    importances["enet"] = _normalize_importance(imp_enet, clip_negative=True)
+    return _safe_series(mi, feature_cols)
 
-    # 2. RandomForestRegressor
-    rf = RandomForestRegressor(
-        n_estimators=300,
-        max_depth=None,
-        min_samples_leaf=1,
-        max_features="sqrt",
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-    )
-    rf.fit(X_train, y_train)
-    imp_rf = pd.Series(rf.feature_importances_, index=X_train.columns)
-    importances["rf"] = _normalize_importance(imp_rf, clip_negative=False)
 
-    # 3. XGBoost nếu có
-    if xgb is not None:
-        xgb_model = xgb.XGBRegressor(
-            objective="reg:squarederror",
-            n_estimators=300,
-            max_depth=3,
-            learning_rate=0.05,
-            subsample=0.9,
-            colsample_bytree=0.9,
+# ============================================================
+# 3. Score 2: Multi-scale correlation với target smoothed
+# ============================================================
+
+def _compute_multiscale_corr_scores(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    y: np.ndarray,
+) -> pd.Series:
+    """
+    Corr tuyệt đối giữa feature và nhiều phiên bản smoothed của y:
+      - EMA 5, 20, 60
+      - Rolling mean 40
+      - Rolling median 50
+    Score = trung bình |corr| trên các phiên bản.
+    """
+    y = np.asarray(y, dtype=float)
+    y_series = pd.Series(y)
+
+    y_ema5 = y_series.ewm(span=5, adjust=False).mean().values
+    y_ema20 = y_series.ewm(span=20, adjust=False).mean().values
+    y_ema60 = y_series.ewm(span=60, adjust=False).mean().values
+    y_rm40 = y_series.rolling(window=40, min_periods=20).mean().values
+    y_med50 = y_series.rolling(window=50, min_periods=25).median().values
+
+    ys = [y_ema5, y_ema20, y_ema60, y_rm40, y_med50]
+
+    scores = {}
+    for feat in feature_cols:
+        x = df[feat].values.astype(float)
+        corrs = []
+        for yy in ys:
+            c = abs(_safe_corr(x, yy))
+            corrs.append(c)
+        scores[feat] = float(np.mean(corrs))
+
+    return _safe_series(scores, feature_cols)
+
+
+# ============================================================
+# 4. Score 3: Stability Selection với ElasticNet trên các fold
+# ============================================================
+
+def _compute_stability_scores(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    y: np.ndarray,
+    folds: List[Dict],
+    min_samples: int = 50,
+) -> pd.Series:
+    """
+    Stability Selection đơn giản:
+      - Với mỗi fold (train_mask):
+          - Fit ElasticNet trên train
+          - Đếm số lần coef != 0 cho mỗi feature
+      - stability_score = counts / n_models
+    """
+    y = np.asarray(y, dtype=float)
+    counts = {f: 0 for f in feature_cols}
+    n_models = 0
+
+    for fold in folds:
+        train_mask = fold["train_mask"]
+        X_train = df.loc[train_mask, feature_cols]
+        y_train = y[train_mask]
+
+        # drop dòng có NaN/inf
+        X = X_train.replace([np.inf, -np.inf], np.nan)
+        mask_rows = np.isfinite(y_train)
+        mask_rows &= ~X.isna().any(axis=1).values
+
+        if mask_rows.sum() < min_samples:
+            continue
+
+        X_clean = X.iloc[mask_rows].values
+        y_clean = y_train[mask_rows]
+
+        # chuẩn hóa feature về zero-mean unit-std cho ổn định hơn
+        mean = X_clean.mean(axis=0)
+        std = X_clean.std(axis=0)
+        std[std == 0] = 1.0
+        X_std = (X_clean - mean) / std
+
+        enet = ElasticNet(
+            alpha=1e-2,
+            l1_ratio=0.7,
             random_state=RANDOM_STATE,
-            tree_method="hist",
-            n_jobs=-1,
+            max_iter=3000,
         )
-        xgb_model.fit(X_train.values, y_train)
-        imp_xgb = pd.Series(xgb_model.feature_importances_, index=X_train.columns)
-        importances["xgb"] = _normalize_importance(imp_xgb, clip_negative=False)
+        try:
+            enet.fit(X_std, y_clean)
+        except Exception:
+            continue
 
-    return importances
+        coef = enet.coef_
+        for j, feat in enumerate(feature_cols):
+            if abs(coef[j]) > 1e-6:
+                counts[feat] += 1
+
+        n_models += 1
+
+    if n_models == 0:
+        # không fit được model nào
+        return pd.Series(0.0, index=feature_cols, dtype=float)
+
+    stability = {f: counts[f] / float(n_models) for f in feature_cols}
+    return _safe_series(stability, feature_cols)
 
 
-def aggregate_feature_importances_multi_model(
-    per_fold_importances: Dict[str, List[pd.Series]],
-    min_folds_used: int = 1,
-    top_k: int = TOP_K_FEATURES,
+# ============================================================
+# 5. Score 4: Predictability Score (AR(1) R^2 của từng feature)
+# ============================================================
+
+def _compute_predictability_scores(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    min_samples: int = 50,
+) -> pd.Series:
+    """
+    Predictability Score:
+      - Với mỗi feature X:
+          - Dùng AR(1): X_t ~ a * X_{t-1}
+          - R^2 trên những điểm hợp lệ
+      - Feature càng "có cấu trúc" (autocorrelation) thì R^2 càng cao.
+    """
+    scores = {}
+
+    for feat in feature_cols:
+        x = df[feat].values.astype(float)
+        x_lag = np.roll(x, 1)
+        mask = np.isfinite(x) & np.isfinite(x_lag)
+        mask[0] = False
+
+        if mask.sum() < min_samples:
+            scores[feat] = 0.0
+            continue
+
+        X = x_lag[mask].reshape(-1, 1)
+        y = x[mask]
+
+        lr = LinearRegression()
+        try:
+            lr.fit(X, y)
+            y_hat = lr.predict(X)
+        except Exception:
+            scores[feat] = 0.0
+            continue
+
+        ss_res = float(np.sum((y - y_hat) ** 2))
+        ss_tot = float(np.sum((y - y.mean()) ** 2))
+        if ss_tot <= 0:
+            r2 = 0.0
+        else:
+            r2 = 1.0 - ss_res / ss_tot
+
+        scores[feat] = max(0.0, float(r2))
+
+    return _safe_series(scores, feature_cols)
+
+
+# ============================================================
+# 6. Core: Advanced Feature Selection
+# ============================================================
+
+def _run_advanced_feature_ranking(
+    df: pd.DataFrame,
+    y: np.ndarray,
+    feature_cols: List[str],
+    folds: List[Dict],
+    top_k: int,
 ) -> Tuple[List[str], pd.DataFrame]:
     """
-    Gộp importance từ nhiều baseline model (ElasticNet, RF, XGB) giữa các fold.
-
-    per_fold_importances:
-      dict model_name -> list[pd.Series] (mỗi series là 1 fold)
-
-    Output:
-      - selected_features: list tên feature
-      - rank_df: DataFrame chi tiết với:
-          enet_importance_mean, rf_importance_mean, xgb_importance_mean,
-          rank_score (trung bình các model)
+    Core logic: tính 4 score cho mỗi feature, rồi kết hợp.
+      - MI với y
+      - Multi-scale corr với y smoothed
+      - Stability selection (ElasticNet, sử dụng folds)
+      - Predictability AR(1) của bản thân feature
     """
-    model_names = list(per_fold_importances.keys())
-    if len(model_names) == 0:
-        raise ValueError("No model importances passed to aggregate_feature_importances_multi_model")
+    # đảm bảo feature_cols không rỗng
+    if len(feature_cols) == 0:
+        raise ValueError("feature_cols is empty in _run_advanced_feature_ranking")
 
-    # union tất cả feature
-    all_features = sorted(
+    # Bỏ các cột hoàn toàn NaN
+    valid_cols = []
+    for f in feature_cols:
+        col = df[f]
+        if not col.replace([np.inf, -np.inf], np.nan).dropna().empty:
+            valid_cols.append(f)
+    feature_cols = valid_cols
+
+    if len(feature_cols) == 0:
+        raise ValueError("All feature columns are empty or NaN in _run_advanced_feature_ranking")
+
+    # Score 1: Mutual Information
+    mi_scores = _compute_mi_scores(df, feature_cols, y)
+
+    # Score 2: Multi-scale corr
+    corr_scores = _compute_multiscale_corr_scores(df, feature_cols, y)
+
+    # Score 3: Stability
+    stab_scores = _compute_stability_scores(df, feature_cols, y, folds)
+
+    # Score 4: Predictability
+    pred_scores = _compute_predictability_scores(df, feature_cols)
+
+    # Chuẩn hóa từng score
+    mi_norm = _normalize_score(mi_scores)
+    corr_norm = _normalize_score(corr_scores)
+    stab_norm = _normalize_score(stab_scores)
+    pred_norm = _normalize_score(pred_scores)
+
+    # Trộn score với trọng số
+    w_mi = 0.3
+    w_corr = 0.3
+    w_stab = 0.3
+    w_pred = 0.1
+
+    final_score = (
+        w_mi * mi_norm
+        + w_corr * corr_norm
+        + w_stab * stab_norm
+        + w_pred * pred_norm
+    )
+
+    # build rank_df để debug/inspect
+    rank_df = pd.DataFrame(
         {
-            f
-            for m in model_names
-            for s in per_fold_importances[m]
-            for f in s.index
+            "mi_score": mi_scores,
+            "mi_norm": mi_norm,
+            "corr_score": corr_scores,
+            "corr_norm": corr_norm,
+            "stability_score": stab_scores,
+            "stability_norm": stab_norm,
+            "predictability_score": pred_scores,
+            "predictability_norm": pred_norm,
+            "final_score": final_score,
         }
     )
 
-    # lưu thống kê theo từng model
-    stats = {}
-    for m in model_names:
-        folds_series = per_fold_importances[m]
-        n_folds_m = len(folds_series)
-
-        imp_mat = pd.DataFrame(index=all_features, columns=range(n_folds_m), dtype=float)
-        for i, s in enumerate(folds_series):
-            imp_mat[i] = s.reindex(all_features)
-
-        imp_mean = imp_mat.mean(axis=1, skipna=True)
-        folds_used = imp_mat.notna().sum(axis=1)
-
-        rank_score_m = imp_mean * (folds_used / max(1, n_folds_m))
-
-        stats[m] = {
-            "importance_mean": imp_mean,
-            "folds_used": folds_used,
-            "rank_score": rank_score_m,
-        }
-
-    # build rank_df tổng hợp
-    rank_df = pd.DataFrame(index=all_features)
-
-    rank_score_list = []
-    for m in model_names:
-        rank_df[f"{m}_importance_mean"] = stats[m]["importance_mean"]
-        rank_df[f"{m}_folds_used"] = stats[m]["folds_used"]
-        rank_df[f"{m}_rank_score"] = stats[m]["rank_score"]
-        rank_score_list.append(stats[m]["rank_score"])
-
-    # final rank_score = mean rank_score của các model
-    rank_df["rank_score"] = pd.concat(rank_score_list, axis=1).mean(axis=1)
-
-    # tổng folds_used = max số fold mà feature xuất hiện ở bất kỳ model nào
-    folds_used_total = None
-    for m in model_names:
-        fu = stats[m]["folds_used"]
-        folds_used_total = fu if folds_used_total is None else fu.combine(folds_used_total, func=np.maximum)
-    rank_df["folds_used_total"] = folds_used_total
-
-    # lọc theo min_folds_used
-    rank_df = rank_df[rank_df["folds_used_total"] >= min_folds_used]
-
-    # sort theo rank_score giảm dần
-    rank_df = rank_df.sort_values("rank_score", ascending=False)
-
+    rank_df = rank_df.sort_values("final_score", ascending=False)
     selected_features = rank_df.index.tolist()[:top_k]
+
     return selected_features, rank_df
 
 
-# ==========================
-# 1. Direct pipeline (scalar)
-# ==========================
+# ============================================================
+# 7. Public API: Pipeline 1 Direct 100d (scalar)
+# ============================================================
 
 def run_feature_selection_direct(
     df_direct: pd.DataFrame,
     folds: List[Dict],
     feature_cols: List[str],
     top_k: int = TOP_K_FEATURES,
-    base_model_for_importance: ElasticNet = None,
-    min_folds_used: int = 1,
+    base_model_for_importance: ElasticNet = None,  # giữ tham số để không vỡ API cũ
+    min_folds_used: int = 1,                       # không dùng nữa nhưng giữ signature
 ) -> Tuple[List[str], pd.DataFrame]:
     """
-    Feature selection cho Pipeline 1 Direct 100d.
+    Advanced Feature Selection cho Pipeline 1 Direct 100d.
 
-    Bước 1: dùng ENet + RF + XGB trên endpoint price để lấy importance per-fold.
-    Bước 2: gộp lại qua aggregate_feature_importances_multi_model -> rank_score.
-    Bước 3: kết hợp thêm |corr(feature, endpoint_price)| để có combined_score.
+    Chiến lược:
+      - Không dùng model importance trên y_direct raw
+      - Thay vào đó:
+          + Mutual Information với y_direct
+          + Corr với y_direct đã smooth multi-scale
+          + Stability selection (ElasticNet, nhiều fold)
+          + Predictability (AR(1) R^2 của từng feature)
+      - Kết hợp 4 score thành final_score và chọn top_k.
+
+    df_direct:
+      - DataFrame đã build features, có cột:
+          lp, y_direct, time, feature_cols
+
+    folds:
+      - list dict, mỗi dict có "train_mask" và "val_mask" (bool index)
+
+    feature_cols:
+      - danh sách tên feature để ranking
     """
+    if "y_direct" not in df_direct.columns:
+        raise ValueError("df_direct must contain 'y_direct' column for run_feature_selection_direct")
 
-    per_fold_importances: Dict[str, List[pd.Series]] = {}
+    y = df_direct["y_direct"].values.astype(float)
 
-    # ===== Bước 1: importance theo model trên từng fold =====
-    for fold in folds:
-        train_mask = fold["train_mask"]
-        val_mask = fold["val_mask"]
-
-        df_train = df_direct.loc[train_mask]
-        df_val = df_direct.loc[val_mask]
-
-        X_train = df_train[feature_cols]
-        # y_train_price: endpoint price từ y_direct của train
-        # dùng cùng công thức lp + y_direct như tuning
-        lp_train = df_train["lp"].values
-        y_train_direct = df_train["y_direct"].values
-        y_train_price = np.exp(lp_train + y_train_direct)
-
-        X_val = df_val[feature_cols]
-        lp_val = df_val["lp"].values
-        y_val_direct = df_val["y_direct"].values
-        y_val_price = np.exp(lp_val + y_val_direct)
-
-        imp_dict = compute_feature_importances_all_models_per_fold(
-            X_train,
-            y_train_price,
-            X_val,
-            y_val_price,
-            base_model_enet=base_model_for_importance,
-        )
-
-        for m_name, imp_series in imp_dict.items():
-            per_fold_importances.setdefault(m_name, []).append(imp_series)
-
-    # ===== Bước 2: gộp importance giữa các fold / model =====
-    # rank_score ở đây là "score từ model" (ENet/RF/XGB)
-    selected_features_tmp, rank_df = aggregate_feature_importances_multi_model(
-        per_fold_importances=per_fold_importances,
-        min_folds_used=min_folds_used,
+    selected_features, rank_df = _run_advanced_feature_ranking(
+        df=df_direct,
+        y=y,
+        feature_cols=feature_cols,
+        folds=folds,
         top_k=top_k,
     )
 
-    # ===== Bước 3: thêm thông tin corr với endpoint price toàn sample =====
-    lp_all = df_direct["lp"].values
-    y_direct_all = df_direct["y_direct"].values
-    y_price_all = np.exp(lp_all + y_direct_all)
-
-    corr_abs_list = []
-    for feat in rank_df.index:
-        x = df_direct[feat].values
-
-        mask = np.isfinite(x) & np.isfinite(y_price_all)
-        if mask.sum() < 30:
-            # quá ít điểm hữu ích -> coi như không đáng tin
-            corr = 0.0
-        else:
-            x_centered = x[mask] - x[mask].mean()
-            y_centered = y_price_all[mask] - y_price_all[mask].mean()
-            denom = np.sqrt((x_centered ** 2).sum()) * np.sqrt((y_centered ** 2).sum())
-            if denom <= 0:
-                corr = 0.0
-            else:
-                corr = float((x_centered * y_centered).sum() / denom)
-
-        corr_abs_list.append(abs(corr))
-
-    rank_df["corr_abs"] = corr_abs_list
-
-    # Chuẩn hóa rank_score và corr_abs về [0,1] để cộng được
-    rs = rank_df["rank_score"].values
-    max_rs = np.nanmax(np.abs(rs)) if len(rs) > 0 else 0.0
-    if max_rs > 0:
-        rank_df["rank_score_norm"] = rank_df["rank_score"] / max_rs
-    else:
-        rank_df["rank_score_norm"] = 0.0
-
-    max_corr = rank_df["corr_abs"].max() if len(rank_df) > 0 else 0.0
-    if max_corr > 0:
-        rank_df["corr_abs_norm"] = rank_df["corr_abs"] / max_corr
-    else:
-        rank_df["corr_abs_norm"] = 0.0
-
-    # Kết hợp: có thể điều chỉnh alpha nếu muốn nghiêng về model/corr hơn
-    alpha = 0.5
-    rank_df["combined_score"] = (
-        alpha * rank_df["rank_score_norm"] + (1.0 - alpha) * rank_df["corr_abs_norm"]
-    )
-
-    # Sort lại theo combined_score và lấy top_k
-    rank_df = rank_df.sort_values("combined_score", ascending=False)
-    selected_features = rank_df.index.tolist()[:top_k]
-
     return selected_features, rank_df
 
-# ==========================
-# 2. Multi step pipeline
-# ==========================
+
+# ============================================================
+# 8. Public API: Pipeline 2 Multi-step
+# ============================================================
 
 def run_feature_selection_multi(
     df_multi: pd.DataFrame,
@@ -340,12 +411,12 @@ def run_feature_selection_multi(
     folds: List[Dict],
     feature_cols: List[str],
     top_k: int = TOP_K_FEATURES,
-    base_model_for_importance: ElasticNet = None,
+    base_model_for_importance: ElasticNet = None,  # giữ để không vỡ API
     min_folds_used: int = 1,
     selection_target_mode: str = "sum",
 ) -> Tuple[List[str], pd.DataFrame]:
     """
-    Feature selection cho Pipeline 2 Multi step.
+    Advanced Feature Selection cho Pipeline 2 Multi-step.
 
     df_multi:
       - DataFrame đã build features, align index với Y_multi
@@ -356,38 +427,13 @@ def run_feature_selection_multi(
     feature_cols:
       - list tên feature ban đầu
     """
-    # build scalar target từ multi output
     y_scalar_all = build_selection_target_from_multi(Y_multi, mode=selection_target_mode)
 
-    per_fold_importances: Dict[str, List[pd.Series]] = {}
-
-    for fold in folds:
-        train_mask = fold["train_mask"]
-        val_mask = fold["val_mask"]
-
-        train_idx = df_multi.index[train_mask]
-        val_idx = df_multi.index[val_mask]
-
-        X_train = df_multi.loc[train_idx, feature_cols]
-        y_train = y_scalar_all[train_idx]
-
-        X_val = df_multi.loc[val_idx, feature_cols]
-        y_val = y_scalar_all[val_idx]
-
-        imp_dict = compute_feature_importances_all_models_per_fold(
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            base_model_enet=base_model_for_importance,
-        )
-
-        for m_name, imp_series in imp_dict.items():
-            per_fold_importances.setdefault(m_name, []).append(imp_series)
-
-    selected_features, rank_df = aggregate_feature_importances_multi_model(
-        per_fold_importances=per_fold_importances,
-        min_folds_used=min_folds_used,
+    selected_features, rank_df = _run_advanced_feature_ranking(
+        df=df_multi,
+        y=y_scalar_all,
+        feature_cols=feature_cols,
+        folds=folds,
         top_k=top_k,
     )
 
