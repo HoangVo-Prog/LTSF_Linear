@@ -202,7 +202,6 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     
     
     # Stacking meta learner trên OOF prediction
-    # Ở đây dùng Ridge, có thể set positive=True nếu muốn weight >= 0
     meta_model = train_stacking_meta_learner(
         oof_pred_matrix=price_hat_matrix,
         y_true=price_true_all,
@@ -253,9 +252,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     lp_last = df_target.loc[last_index_before_test, "lp"]
 
     R_hat_test_all = []
-
     from models_direct import MODEL_REGISTRY as REG
-    
+
     submissions_dir = "submissions_models"
     os.makedirs(submissions_dir, exist_ok=True)
 
@@ -271,21 +269,36 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         X_last = df_target.loc[[last_index_before_test], feature_cols]
         R_hat_test = model.predict_100day_return(X_last)[0]
         R_hat_test_all.append(R_hat_test)
-        
-        # Build path cho riêng model này (option: chia đều R_100)
+
+        # NEW: convert sang price endpoint
+        price_hat_test = float(np.exp(lp_last + R_hat_test))
+
+        # Build path riêng cho model (như cũ, nếu bạn vẫn muốn lưu submission từng model)
         r_daily_model = R_hat_test / HORIZON
         lp_path_model = lp_last + np.arange(1, HORIZON + 1) * r_daily_model
         price_path_model = np.exp(lp_path_model)
 
-        # Lưu submission riêng cho model
         sub_path = os.path.join(submissions_dir, f"submission_{model_name}.csv")
         make_submission(price_path_model, sub_path)
         print(f"Saved single-model submission for {model_name} to {sub_path}")
 
-    R_hat_test_all = np.array(R_hat_test_all)  # shape (M,)
-    R_hat_test_ensemble = float(
-        predict_with_meta_learner(meta_model, R_hat_test_all)[0]
+        # Lưu thêm price_hat_test cho meta
+        if i == 0:
+            price_hat_test_all = [price_hat_test]
+        else:
+            price_hat_test_all.append(price_hat_test)
+
+    R_hat_test_all = np.array(R_hat_test_all)          # (M,)
+    price_hat_test_all = np.array(price_hat_test_all)  # (M,)
+
+    # Ensemble trên price bằng meta learner
+    price_hat_test_ensemble = float(
+        predict_with_meta_learner(meta_model, price_hat_test_all)[0]
     )
+
+    # Convert ngược về log-return 100 ngày
+    R_hat_test_ensemble = np.log(price_hat_test_ensemble) - lp_last
+
 
     # 12. Convert R_hat_test_ensemble thành path 100 ngày (chia đều)
     lp_last = df_target.loc[last_index_before_test, "lp"]

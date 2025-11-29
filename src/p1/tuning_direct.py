@@ -106,8 +106,9 @@ def evaluate_model_one_fold_direct(
     horizon: int = HORIZON,
 ) -> float:
     """
-    Train model trên fold, evaluate MSE trên y_direct (100d log return),
-    dùng toàn bộ hàng trong val_mask.
+    Train trên fold, evaluate MSE trên price endpoint:
+      price_true_T = exp(lp_t + y_true)
+      price_hat_T  = exp(lp_t + y_hat)
     """
     train_mask = fold["train_mask"]
     val_mask = fold["val_mask"]
@@ -116,7 +117,6 @@ def evaluate_model_one_fold_direct(
     df_val = df_direct.loc[val_mask]
 
     if df_val.empty:
-        # nếu vì lý do gì đó fold này không có validation, coi như rất tệ
         return np.inf
 
     X_train = df_train[feature_cols]
@@ -125,10 +125,17 @@ def evaluate_model_one_fold_direct(
     X_val = df_val[feature_cols]
     y_val = df_val["y_direct"].values
 
+    # fit trên log-return
     model.fit(X_train, y_train)
     y_hat = model.predict_100day_return(X_val)
 
-    return mse(y_val, y_hat)
+    # convert sang price
+    lp_val = df_val["lp"].values
+    price_true = np.exp(lp_val + y_val)
+    price_hat = np.exp(lp_val + y_hat)
+
+    return mse(price_true, price_hat)
+
 
 def tune_model_direct(
     model_name: str,
@@ -187,8 +194,9 @@ def collect_validation_predictions_direct(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Chạy lại CV với best_config để collect:
-      - y_true_all: shape (N_total,)  = y_direct thực
-      - y_hat_all:  shape (N_total,)  = dự báo log return 100d
+      - price_true_all: shape (N,)
+      - price_hat_all: shape (N,)
+    (endpoint price tại t+H)
     """
     ModelClass = MODEL_REGISTRY[model_name]
 
@@ -215,12 +223,17 @@ def collect_validation_predictions_direct(
         model.fit(X_train, y_train)
         y_hat = model.predict_100day_return(X_val)
 
-        all_true.append(y_val)
-        all_hat.append(y_hat)
+        # convert sang price
+        lp_val = df_val["lp"].values
+        price_true = np.exp(lp_val + y_val)
+        price_hat = np.exp(lp_val + y_hat)
+
+        all_true.append(price_true)
+        all_hat.append(price_hat)
 
     if not all_true:
         raise RuntimeError("No validation samples collected for ensemble")
 
-    y_true_all = np.concatenate(all_true)
-    y_hat_all = np.concatenate(all_hat)
-    return y_true_all, y_hat_all
+    price_true_all = np.concatenate(all_true)
+    price_hat_all = np.concatenate(all_hat)
+    return price_true_all, price_hat_all
