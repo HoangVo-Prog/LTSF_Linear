@@ -9,6 +9,8 @@ from models_direct import MODEL_REGISTRY
 from tuning_direct import (
     tune_model_direct,
     collect_validation_predictions_direct,
+    build_multi_scale_momentum_target,
+    build_directional_momentum_target,
 )
 from ensemble_direct import (
     tune_ensemble_weights_random_search,
@@ -100,19 +102,25 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     # )
     
     
-    df_target, y_direct = build_direct_100d_target(
-        df_feat,
-        horizon=HORIZON,
-        target_type="weighted_multi",
-        weighted_horizons=(20, 50, 100),
-        weighted_weights=(0.5, 0.3, 0.2),
+    # df_target, y_direct = build_direct_100d_target(
+    #     df_feat,
+    #     horizon=HORIZON,
+    #     target_type="weighted_multi",
+    #     weighted_horizons=(20, 50, 100),
+    #     weighted_weights=(0.5, 0.3, 0.2),
 
-        # Huber cải tiến
-        huberize=True,
-        huber_outer_percentiles=(0.5, 99.5),
-        huber_k_pos=0.5,   # cắt bớt các cú tăng quá mạnh
-        huber_k_neg=2.0,   # cho phép cú rơi âm lớn hơn
-    )
+    #     # Huber cải tiến
+    #     huberize=True,
+    #     huber_outer_percentiles=(0.5, 99.5),
+    #     huber_k_pos=0.5,   # cắt bớt các cú tăng quá mạnh
+    #     huber_k_neg=2.0,   # cho phép cú rơi âm lớn hơn
+    # )
+    
+    # Multi scale momentum
+    df_target, y_direct = build_multi_scale_momentum_target(df_feat)
+
+    # Directional momentum
+    # df_target, y_direct = build_directional_momentum_target(df_feat)
 
 
     df_target["y_direct"] = y_direct
