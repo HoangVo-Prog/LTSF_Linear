@@ -221,7 +221,6 @@ def aggregate_feature_importances_multi_model(
 # 1. Direct pipeline (scalar)
 # ==========================
 
-
 def run_feature_selection_direct(
     df_direct: pd.DataFrame,
     folds: List[Dict],
@@ -230,8 +229,17 @@ def run_feature_selection_direct(
     base_model_for_importance: ElasticNet = None,
     min_folds_used: int = 1,
 ) -> Tuple[List[str], pd.DataFrame]:
+    """
+    Feature selection cho Pipeline 1 Direct 100d.
+
+    Bước 1: dùng ENet + RF + XGB trên endpoint price để lấy importance per-fold.
+    Bước 2: gộp lại qua aggregate_feature_importances_multi_model -> rank_score.
+    Bước 3: kết hợp thêm |corr(feature, endpoint_price)| để có combined_score.
+    """
+
     per_fold_importances: Dict[str, List[pd.Series]] = {}
 
+    # ===== Bước 1: importance theo model trên từng fold =====
     for fold in folds:
         train_mask = fold["train_mask"]
         val_mask = fold["val_mask"]
@@ -262,11 +270,63 @@ def run_feature_selection_direct(
         for m_name, imp_series in imp_dict.items():
             per_fold_importances.setdefault(m_name, []).append(imp_series)
 
-    selected_features, rank_df = aggregate_feature_importances_multi_model(
+    # ===== Bước 2: gộp importance giữa các fold / model =====
+    # rank_score ở đây là "score từ model" (ENet/RF/XGB)
+    selected_features_tmp, rank_df = aggregate_feature_importances_multi_model(
         per_fold_importances=per_fold_importances,
         min_folds_used=min_folds_used,
         top_k=top_k,
     )
+
+    # ===== Bước 3: thêm thông tin corr với endpoint price toàn sample =====
+    lp_all = df_direct["lp"].values
+    y_direct_all = df_direct["y_direct"].values
+    y_price_all = np.exp(lp_all + y_direct_all)
+
+    corr_abs_list = []
+    for feat in rank_df.index:
+        x = df_direct[feat].values
+
+        mask = np.isfinite(x) & np.isfinite(y_price_all)
+        if mask.sum() < 30:
+            # quá ít điểm hữu ích -> coi như không đáng tin
+            corr = 0.0
+        else:
+            x_centered = x[mask] - x[mask].mean()
+            y_centered = y_price_all[mask] - y_price_all[mask].mean()
+            denom = np.sqrt((x_centered ** 2).sum()) * np.sqrt((y_centered ** 2).sum())
+            if denom <= 0:
+                corr = 0.0
+            else:
+                corr = float((x_centered * y_centered).sum() / denom)
+
+        corr_abs_list.append(abs(corr))
+
+    rank_df["corr_abs"] = corr_abs_list
+
+    # Chuẩn hóa rank_score và corr_abs về [0,1] để cộng được
+    rs = rank_df["rank_score"].values
+    max_rs = np.nanmax(np.abs(rs)) if len(rs) > 0 else 0.0
+    if max_rs > 0:
+        rank_df["rank_score_norm"] = rank_df["rank_score"] / max_rs
+    else:
+        rank_df["rank_score_norm"] = 0.0
+
+    max_corr = rank_df["corr_abs"].max() if len(rank_df) > 0 else 0.0
+    if max_corr > 0:
+        rank_df["corr_abs_norm"] = rank_df["corr_abs"] / max_corr
+    else:
+        rank_df["corr_abs_norm"] = 0.0
+
+    # Kết hợp: có thể điều chỉnh alpha nếu muốn nghiêng về model/corr hơn
+    alpha = 0.5
+    rank_df["combined_score"] = (
+        alpha * rank_df["rank_score_norm"] + (1.0 - alpha) * rank_df["corr_abs_norm"]
+    )
+
+    # Sort lại theo combined_score và lấy top_k
+    rank_df = rank_df.sort_values("combined_score", ascending=False)
+    selected_features = rank_df.index.tolist()[:top_k]
 
     return selected_features, rank_df
 

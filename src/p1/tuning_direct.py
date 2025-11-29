@@ -314,7 +314,6 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
 #     # Rolling, Kalman và các model khác chưa có hyper
 #     return [{}]
 
-
 def mse(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a - b) ** 2))
 
