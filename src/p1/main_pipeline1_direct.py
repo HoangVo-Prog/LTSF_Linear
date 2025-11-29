@@ -120,8 +120,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         "gbdt",
         # "rolling_elasticnet",
         # "kalman",
-        # "dlinear",
-        # "nlinear",
+        "dlinear",
+        "nlinear",
     ]
 
     best_configs = {}
