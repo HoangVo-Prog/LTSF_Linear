@@ -81,7 +81,13 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     df_feat = build_features(df)
 
     # 3. Build target direct 100d
-    df_target, y_direct = build_direct_100d_target(df_feat, horizon=HORIZON)
+    df_target, y_direct = build_direct_100d_target(
+        df_feat,
+        horizon=HORIZON,  # vẫn truyền, nhưng thực tế không dùng khi target_type="weighted_multi"
+        target_type="weighted_multi",
+        weighted_horizons=(20, 50, 100),
+        weighted_weights=(0.2, 0.3, 0.5),
+    )
     df_target["y_direct"] = y_direct
 
     # 4. Define feature_cols ban đầu
