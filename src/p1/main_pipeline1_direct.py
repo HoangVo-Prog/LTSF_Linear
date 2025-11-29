@@ -39,7 +39,7 @@ from data_utils import (
     winsorize_series,
 )
 
-from config import HORIZON, TRAIN_CSV
+from config import HORIZON, TRAIN_CSV, TOP_K_FEATURES, N_FOLDS
 from submission import make_submission
 from features import build_features
 from splits import make_folds, get_test_indices
@@ -103,8 +103,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         df_direct=df_target,
         folds=folds,
         feature_cols=feature_cols_all,
-        top_k=80,
-        min_folds_used=1,
+        top_k=TOP_K_FEATURES,
+        min_folds_used=N_FOLDS,
     )
     feature_cols = selected_features
     print("Selected features (direct 100d):", feature_cols)
