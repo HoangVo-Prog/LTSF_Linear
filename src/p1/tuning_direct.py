@@ -152,8 +152,6 @@ from evaluation_direct import compute_endpoint_price_from_direct, mse
 #     # Rolling, Kalman: tạm thời chưa có grid
 #     return [{}]
 
-from typing import Dict, Any, List
-
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     """
     Grid tối giản cho từng model type.
@@ -171,12 +169,13 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
 
     # 2. Ridge: vài alpha logspace, chỉ chơi nhẹ với scale_target
     if model_name == "ridge":
-        return [
-            {"alpha": 1e-4, "scale_target": True},
-            {"alpha": 3e-4, "scale_target": True},
-            {"alpha": 1e-3, "scale_target": True},
-            {"alpha": 3e-3, "scale_target": False},
-        ]
+        alphas = [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 1e-1, 1.0]
+        scale_targets = [True, False]
+        grid = []
+        for a in alphas:
+            for st in scale_targets:
+                grid.append({"alpha": a, "scale_target": st})
+        return grid
 
     # 3. XGBoost: 4 cấu hình gọn, đổi depth và lr
     if model_name == "xgboost":
