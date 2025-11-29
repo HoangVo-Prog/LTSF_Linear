@@ -154,30 +154,61 @@ from evaluation_direct import compute_endpoint_price_from_direct, mse
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     """
-    Grid tối giản cho từng model type.
-    Ưu tiên số cấu hình ít nhất có thể nhưng vẫn đa dạng hành vi.
+    Grid tối giản cho từng model.
+    Mỗi model có vài cấu hình đại diện, trong đó có cấu hình tốt đã tìm được.
     """
 
-    # 1. ElasticNet: vài alpha và l1_ratio "đại diện"
+    # 1. ElasticNet
     if model_name == "elasticnet":
         return [
-            {"alpha": 1e-4, "l1_ratio": 0.2, "max_iter": 5000, "scale_target": True},
-            {"alpha": 3e-4, "l1_ratio": 0.5, "max_iter": 5000, "scale_target": True},
-            {"alpha": 1e-3, "l1_ratio": 0.8, "max_iter": 5000, "scale_target": True},
-            {"alpha": 3e-3, "l1_ratio": 0.5, "max_iter": 5000, "scale_target": False},
+            {
+                "alpha": 1e-4,
+                "l1_ratio": 0.2,
+                "max_iter": 5000,
+                "scale_target": True,
+            },
+            {
+                "alpha": 1e-3,
+                "l1_ratio": 0.5,
+                "max_iter": 5000,
+                "scale_target": True,
+            },
+            {
+                "alpha": 3e-3,
+                "l1_ratio": 0.8,
+                "max_iter": 5000,
+                "scale_target": True,
+            },
+            {   # best gần đây
+                "alpha": 1e-2,
+                "l1_ratio": 0.9,
+                "max_iter": 5000,
+                "scale_target": True,
+            },
         ]
 
-    # 2. Ridge: vài alpha logspace, chỉ chơi nhẹ với scale_target
+    # 2. Ridge
     if model_name == "ridge":
-        alphas = [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 1e-1, 1.0]
-        scale_targets = [True, False]
-        grid = []
-        for a in alphas:
-            for st in scale_targets:
-                grid.append({"alpha": a, "scale_target": st})
-        return grid
+        return [
+            {
+                "alpha": 1e-3,
+                "scale_target": True,
+            },
+            {
+                "alpha": 1e-2,
+                "scale_target": True,
+            },
+            {
+                "alpha": 1e-1,
+                "scale_target": True,
+            },
+            {   # best gần đây
+                "alpha": 1.0,
+                "scale_target": True,
+            },
+        ]
 
-    # 3. XGBoost: 4 cấu hình gọn, đổi depth và lr
+    # 3. XGBoost
     if model_name == "xgboost":
         return [
             {
@@ -190,30 +221,30 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
                 "reg_lambda": 1.0,
                 "reg_alpha": 0.0,
             },
+            {   # best gần đây
+                "n_estimators": 600,
+                "max_depth": 3,
+                "learning_rate": 0.03,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "tree_method": "hist",
+                "reg_lambda": 1.0,
+                "reg_alpha": 0.0,
+            },
             {
                 "n_estimators": 800,
                 "max_depth": 3,
-                "learning_rate": 0.03,
-                "subsample": 0.9,
-                "colsample_bytree": 0.8,
-                "tree_method": "hist",
-                "reg_lambda": 1.0,
-                "reg_alpha": 0.0,
-            },
-            {
-                "n_estimators": 400,
-                "max_depth": 5,
-                "learning_rate": 0.05,
-                "subsample": 0.9,
-                "colsample_bytree": 0.8,
-                "tree_method": "hist",
-                "reg_lambda": 1.0,
-                "reg_alpha": 0.0,
-            },
-            {
-                "n_estimators": 800,
-                "max_depth": 5,
                 "learning_rate": 0.02,
+                "subsample": 0.9,
+                "colsample_bytree": 0.8,
+                "tree_method": "hist",
+                "reg_lambda": 1.0,
+                "reg_alpha": 0.0,
+            },
+            {
+                "n_estimators": 600,
+                "max_depth": 5,
+                "learning_rate": 0.03,
                 "subsample": 0.9,
                 "colsample_bytree": 0.8,
                 "tree_method": "hist",
@@ -222,7 +253,7 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
             },
         ]
 
-    # 4. LightGBM: 4 cấu hình cơ bản, chơi depth và lr
+    # 4. LightGBM
     if model_name == "lgbm":
         return [
             {
@@ -236,21 +267,21 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
             {
                 "n_estimators": 800,
                 "max_depth": -1,
-                "learning_rate": 0.03,
+                "learning_rate": 0.02,
                 "subsample": 0.9,
                 "colsample_bytree": 0.8,
                 "min_child_samples": 40,
             },
-            {
-                "n_estimators": 400,
-                "max_depth": 4,
-                "learning_rate": 0.05,
-                "subsample": 0.9,
+            {   # best gần đây
+                "n_estimators": 600,
+                "max_depth": 6,
+                "learning_rate": 0.03,
+                "subsample": 0.8,
                 "colsample_bytree": 0.8,
                 "min_child_samples": 20,
             },
             {
-                "n_estimators": 800,
+                "n_estimators": 600,
                 "max_depth": 6,
                 "learning_rate": 0.02,
                 "subsample": 0.9,
@@ -259,7 +290,7 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
             },
         ]
 
-    # 5. RandomForest: vài cấu hình tượng trưng cho n_estimators và depth
+    # 5. RandomForest
     if model_name == "random_forest":
         return [
             {
@@ -268,52 +299,59 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
                 "min_samples_leaf": 1,
                 "max_features": "sqrt",
             },
-            {
-                "n_estimators": 400,
-                "max_depth": 8,
+            {   # best gần đây
+                "n_estimators": 200,
+                "max_depth": 10,
                 "min_samples_leaf": 1,
                 "max_features": "sqrt",
             },
             {
                 "n_estimators": 400,
-                "max_depth": 8,
-                "min_samples_leaf": 2,
-                "max_features": "log2",
-            },
-            {
-                "n_estimators": 800,
-                "max_depth": 12,
-                "min_samples_leaf": 2,
+                "max_depth": 10,
+                "min_samples_leaf": 1,
                 "max_features": "sqrt",
             },
         ]
 
-    # 6. GradientBoosting (GBDT): 4 cấu hình nhỏ gọn
+    # 6. GradientBoosting (GBDT)
     if model_name == "gbdt":
         return [
-            {"n_estimators": 200, "max_depth": 2, "learning_rate": 0.05, "subsample": 0.9},
-            {"n_estimators": 400, "max_depth": 3, "learning_rate": 0.03, "subsample": 0.9},
-            {"n_estimators": 400, "max_depth": 3, "learning_rate": 0.02, "subsample": 1.0},
-            {"n_estimators": 800, "max_depth": 4, "learning_rate": 0.02, "subsample": 0.9},
+            {
+                "n_estimators": 200,
+                "max_depth": 2,
+                "learning_rate": 0.05,
+                "subsample": 0.9,
+            },
+            {   # best gần đây
+                "n_estimators": 400,
+                "max_depth": 2,
+                "learning_rate": 0.03,
+                "subsample": 0.9,
+            },
+            {
+                "n_estimators": 400,
+                "max_depth": 3,
+                "learning_rate": 0.03,
+                "subsample": 0.9,
+            },
         ]
 
-    # 7. DLinear: 2 cấu hình đủ để thử scale_target và intercept
+    # 7. DLinear
     if model_name == "dlinear":
         return [
             {"scale_target": True, "fit_intercept": True},
             {"scale_target": False, "fit_intercept": True},
         ]
 
-    # 8. NLinear: 2 cấu hình, ưu tiên không intercept
+    # 8. NLinear
     if model_name == "nlinear":
         return [
             {"scale_target": True, "fit_intercept": False},
             {"scale_target": False, "fit_intercept": False},
         ]
 
-    # Rolling, Kalman và các model khác chưa có hyper
+    # Default
     return [{}]
-
 def mse(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a - b) ** 2))
 
