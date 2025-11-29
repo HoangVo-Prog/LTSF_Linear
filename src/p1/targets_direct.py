@@ -15,6 +15,51 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HORIZON
 
+def _apply_robust_asymmetric_huber(
+    y: np.ndarray,
+    outer_percentiles=(0.5, 99.5),
+    k_pos: float = 0.8,
+    k_neg: float = 2.0,
+) -> np.ndarray:
+    """
+    Huber cải tiến, bất đối xứng:
+
+    - Trước tiên clip rất nhẹ theo outer_percentiles để bỏ extreme insane.
+    - Dùng median + MAD để chuẩn hoá.
+    - Clip z-score: phía dương mạnh tay (k_pos nhỏ), phía âm nới (k_neg lớn)
+      -> giảm bias tăng nhưng vẫn giữ được cú rơi mạnh.
+    """
+    y_new = y.copy()
+    valid = ~np.isnan(y_new)
+    if valid.sum() == 0:
+        return y_new
+
+    v = y_new[valid]
+
+    # 1) Outer clip nhẹ để tránh vài điểm điên làm hỏng MAD
+    low_o, high_o = np.percentile(v, outer_percentiles)
+    v = np.clip(v, low_o, high_o)
+
+    # 2) Robust center + scale
+    med = np.median(v)
+    mad = np.median(np.abs(v - med))
+    if mad <= 1e-8:
+        # fallback: dùng std nếu MAD quá nhỏ
+        std = np.std(v)
+        scale = std if std > 1e-8 else 1.0
+    else:
+        scale = mad * 1.4826  # MAD -> ~std
+
+    z = (y_new - med) / scale
+
+    # 3) Clip bất đối xứng: positive bị chặn sớm, negative được phép lớn hơn
+    z_clipped = z.copy()
+    z_clipped[z > 0] = np.minimum(z[z > 0], k_pos)
+    z_clipped[z < 0] = np.maximum(z[z < 0], -k_neg)
+
+    y_new = med + z_clipped * scale
+    return y_new
+
 
 def build_direct_100d_target(
     df: pd.DataFrame,
@@ -23,45 +68,29 @@ def build_direct_100d_target(
     weighted_horizons=(20, 50, 100),
     weighted_weights=(0.5, 0.3, 0.2),
 
-    huberize: bool = False,
-    huber_percentiles=(2.0, 98.0),
-
-    # ----- Regime adjust: volatility -----
-    regime_vol_adjust: bool = False,
-    regime_vol_col: str = "vol_60",
-    regime_vol_quantile: float = 0.9,   # q90 = vol spike
-    regime_vol_shrink: float = 0.6,     # shrink 40 percent khi vol cao
-
-    # ----- Regime adjust: drawdown -----
-    regime_dd_adjust: bool = False,
-    regime_dd_price_col: str = "close", # nếu không có, sẽ dùng exp(lp)
-    regime_dd_threshold: float = 0.15,  # drawdown > 15 percent coi là downtrend
-    regime_dd_shrink: float = 0.5,      # shrink thêm 50 percent khi DD lớn
+    # Huber cải tiến
+    huberize: bool = True,
+    huber_outer_percentiles=(0.5, 99.5),
+    huber_k_pos: float = 0.8,
+    huber_k_neg: float = 2.0,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Tạo target scalar y_direct[t] dùng cho direct model.
+    Tạo target y_direct:
 
-    target_type:
-      - "endpoint": y[t] = lp_{t+H} - lp_t
-      - "weighted_multi": y[t] = sum_i w_i * (lp_{t+h_i} - lp_t)
+    - endpoint: y[t] = lp_{t+H} - lp_t
+    - weighted_multi: y[t] = sum_i w_i * (lp_{t+h_i} - lp_t)
 
-    Các bước biến đổi:
-      1. Tính y_raw (endpoint hoặc weighted_multi)
-      2. Huberize (optional)
-      3. Regime adjust theo volatility (optional)
-      4. Regime adjust theo drawdown (optional)
-      5. Drop các hàng không có y_direct (NaN ở cuối chuỗi)
+    Sau đó áp dụng Huber cải tiến (robust + bất đối xứng) trên toàn bộ y_direct.
     """
 
     df = df.copy()
     lp = df["lp"].values.astype(float)
     n = len(df)
 
-    # ========== 1. Tính y_raw ==========
+    # ===== 1. Tính y_raw =====
     y_raw = np.full(shape=n, fill_value=np.nan, dtype=float)
 
     if target_type == "endpoint":
-        # Chuẩn 100d endpoint: lp_{t+H} - lp_t
         for t in range(n):
             if t + horizon < n:
                 y_raw[t] = lp[t + horizon] - lp[t]
@@ -75,7 +104,6 @@ def build_direct_100d_target(
 
         max_h = int(horizons_arr.max())
 
-        # Chuẩn hóa weight để sum = 1
         s = weights_arr.sum()
         if not np.isclose(s, 1.0):
             weights_arr = weights_arr / s
@@ -83,13 +111,12 @@ def build_direct_100d_target(
         for t in range(n):
             if t + max_h < n:
                 base_lp = lp[t]
-                returns = lp[t + horizons_arr] - base_lp  # vector r20, r50, r100
+                returns = lp[t + horizons_arr] - base_lp
                 y_raw[t] = float(np.dot(weights_arr, returns))
 
     else:
         raise ValueError(f"Unknown target_type = {target_type}")
 
-    # Nếu không có điểm nào đủ future thì trả ra df rỗng
     if np.all(np.isnan(y_raw)):
         df["y_direct"] = y_raw
         df_out = df.loc[[]].reset_index(drop=True)
@@ -98,49 +125,20 @@ def build_direct_100d_target(
 
     y = y_raw.copy()
 
-    # ========== 2. Huberize (clip extreme returns) ==========
+    # ===== 2. Huber cải tiến =====
     if huberize:
-        valid = ~np.isnan(y)
-        if valid.sum() > 0:
-            low_p, high_p = huber_percentiles
-            low, high = np.percentile(y[valid], [low_p, high_p])
-            y[valid] = np.clip(y[valid], low, high)
+        y = _apply_robust_asymmetric_huber(
+            y,
+            outer_percentiles=huber_outer_percentiles,
+            k_pos=huber_k_pos,
+            k_neg=huber_k_neg,
+        )
 
-    # ========== 3. Regime adjust theo volatility ==========
-    if regime_vol_adjust:
-        if regime_vol_col not in df.columns:
-            raise KeyError(f"regime_vol_col '{regime_vol_col}' không có trong df")
-
-        vol = df[regime_vol_col].values.astype(float)
-        valid = ~np.isnan(y) & ~np.isnan(vol)
-
-        if valid.sum() > 0:
-            vol_thr = float(np.quantile(vol[valid], regime_vol_quantile))
-            high_vol_mask = valid & (vol > vol_thr)
-            # shrink khi vol spike
-            y[high_vol_mask] = y[high_vol_mask] * regime_vol_shrink
-
-    # ========== 4. Regime adjust theo drawdown (so với đỉnh lịch sử) ==========
-    if regime_dd_adjust:
-        if regime_dd_price_col in df.columns:
-            price = df[regime_dd_price_col].values.astype(float)
-        else:
-            # fallback: dùng exp(lp) nếu không có cột close
-            price = np.exp(lp)
-
-        # max chạy từ đầu chuỗi tới hiện tại (ATH đến thời điểm t)
-        roll_max = pd.Series(price).cummax().values
-        dd = (roll_max - price) / roll_max  # drawdown fraction
-
-        valid = ~np.isnan(y) & ~np.isnan(dd)
-        if valid.sum() > 0:
-            high_dd_mask = valid & (dd > regime_dd_threshold)
-            y[high_dd_mask] = y[high_dd_mask] * regime_dd_shrink
-
-    # ========== 5. Gán vào df và drop các hàng không có label ==========
+    # ===== 3. Gán vào df & drop các hàng không có future =====
     df["y_direct"] = y
     mask = ~np.isnan(df["y_direct"])
     df_out = df.loc[mask].reset_index(drop=True)
     y_out = df_out["y_direct"].copy()
 
     return df_out, y_out
+

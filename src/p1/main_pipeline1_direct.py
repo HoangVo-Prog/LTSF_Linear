@@ -107,19 +107,13 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         weighted_horizons=(20, 50, 100),
         weighted_weights=(0.5, 0.3, 0.2),
 
+        # Huber cải tiến
         huberize=True,
-        huber_percentiles=(2.0, 98.0),
-
-        regime_vol_adjust=True,
-        regime_vol_col="vol_60",
-        regime_vol_quantile=0.9,   # top 10 percent vol = vol spike
-        regime_vol_shrink=0.6,     # shrink 40 percent khi vol cao
-
-        regime_dd_adjust=True,
-        regime_dd_price_col="close",  # hoặc bỏ để dùng exp(lp)
-        regime_dd_threshold=0.15,     # drawdown > 15 percent coi là downtrend
-        regime_dd_shrink=0.5,         # shrink thêm 50 percent khi downtrend lớn
+        huber_outer_percentiles=(0.5, 99.5),
+        huber_k_pos=0.8,   # cắt bớt các cú tăng quá mạnh
+        huber_k_neg=2.0,   # cho phép cú rơi âm lớn hơn
     )
+
 
     df_target["y_direct"] = y_direct
 
