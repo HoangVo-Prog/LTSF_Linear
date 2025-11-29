@@ -1,7 +1,7 @@
 HORIZON = 100  # số ngày dự báo
 
 # Feature selection
-TOP_K_FEATURES = 100
+TOP_K_FEATURES = 60
 
 # CV config
 N_FOLDS = 3
