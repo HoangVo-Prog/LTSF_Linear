@@ -3,6 +3,8 @@
 from typing import List, Dict, Tuple
 import numpy as np
 
+from sklearn.linear_model import Ridge, ElasticNet
+
 
 def compute_price_endpoint_from_R(
     lp: np.ndarray,
@@ -12,10 +14,6 @@ def compute_price_endpoint_from_R(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Từ R_hat (log return 100 ngày) -> price_hat_T, price_true_T.
-
-    lp: array log price
-    start_indices: index t
-    R_hat: array shape (N_eval,) tương ứng với t
     """
     price_hat_T = []
     price_true_T = []
@@ -42,18 +40,7 @@ def tune_ensemble_weights_random_search(
     l2_shrink: float = 0.0,
 ) -> np.ndarray:
     """
-    Tuning lần 1 cho ensemble: tìm weight tối ưu trên simplex.
-
-    price_hat_matrix: shape (N, M)
-      - N: số điểm validation (gom tất cả fold lại)
-      - M: số model
-    price_true: shape (N,)
-
-    n_samples: số vector weight random trên simplex.
-    l2_shrink: nếu > 0 thì thêm penalty lambda * ||w - w_equal||^2.
-
-    Output:
-      w_best: vector length M
+    Giữ lại hàm random search cũ nếu muốn so sánh.
     """
     N, M = price_hat_matrix.shape
     if M == 1:
@@ -66,7 +53,6 @@ def tune_ensemble_weights_random_search(
     rng = np.random.default_rng(42)
 
     for _ in range(n_samples):
-        # random trên simplex
         raw = rng.random(M)
         w = raw / raw.sum()
 
@@ -92,13 +78,7 @@ def tune_ensemble_shrinkage(
     shrink_values: List[float] = None,
 ) -> Tuple[float, np.ndarray]:
     """
-    Tuning lần 2: shrink w_star về w_equal.
-
-    shrink_values: list lambda in [0,1].
-      w(lambda) = lambda * w_star + (1 - lambda) * w_equal.
-
-    Trả về:
-      best_lambda, w_opt
+    Giữ lại nếu vẫn muốn dùng random search + shrink.
     """
     N, M = price_hat_matrix.shape
     w_equal = np.ones(M) / M
@@ -120,3 +100,70 @@ def tune_ensemble_shrinkage(
             best_w = w
 
     return best_lambda, best_w
+
+
+# ============================================================
+# Stacking meta learner trên OOF prediction
+# ============================================================
+
+def train_stacking_meta_learner(
+    oof_pred_matrix: np.ndarray,
+    y_true: np.ndarray,
+    model_type: str = "ridge",
+    positive: bool = False,
+) -> object:
+    """
+    Train meta learner trên OOF prediction.
+
+    oof_pred_matrix: shape (N, M)
+      N: số điểm validation (gộp tất cả fold)
+      M: số model base
+    y_true: shape (N,)
+      y_direct thực tế (log return 100 ngày)
+
+    model_type:
+      - "ridge": RidgeRegression
+      - "elasticnet": ElasticNet
+
+    positive:
+      - Nếu True thì ép weight không âm (chỉ áp dụng cho Ridge).
+    """
+    X = np.asarray(oof_pred_matrix, dtype=float)
+    y = np.asarray(y_true, dtype=float)
+
+    if model_type == "ridge":
+        # alpha cố định hoặc bạn có thể cho một grid nhỏ
+        meta = Ridge(
+            alpha=1e-2,
+            fit_intercept=True,
+            random_state=42,
+            positive=positive,
+        )
+    elif model_type == "elasticnet":
+        meta = ElasticNet(
+            alpha=1e-3,
+            l1_ratio=0.5,
+            max_iter=5000,
+            random_state=42,
+        )
+    else:
+        raise ValueError(f"Unknown meta model_type: {model_type}")
+
+    meta.fit(X, y)
+    return meta
+
+
+def predict_with_meta_learner(
+    meta_model: object,
+    base_preds: np.ndarray,
+) -> np.ndarray:
+    """
+    Dự báo bằng meta learner.
+
+    base_preds: shape (N, M) hoặc (M,)
+      - Nếu là (M,) sẽ reshape thành (1, M).
+    """
+    arr = np.asarray(base_preds, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    return meta_model.predict(arr)

@@ -12,7 +12,7 @@ from tuning_direct import (
 )
 from ensemble import (
     tune_ensemble_weights_random_search,
-    tune_ensemble_shrinkage,
+    tune_ensemble_shrinkage, train_stacking_meta_learner, predict_with_meta_learner,
 )
 
 import warnings
@@ -199,25 +199,45 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
     price_hat_matrix = np.vstack(price_hat_matrix_list).T  # shape (N, M)
     print("Ensemble uses models:", used_models)
-
-    # 9. Ensemble - tuning lần 1: tìm weight tối ưu trên simplex
-    w_star = tune_ensemble_weights_random_search(
-        price_hat_matrix=price_hat_matrix,
-        price_true=price_true_all,
-        n_samples=2000,
-        l2_shrink=0.0,
+    
+    
+    # Stacking meta learner trên OOF prediction
+    # Ở đây dùng Ridge, có thể set positive=True nếu muốn weight >= 0
+    meta_model = train_stacking_meta_learner(
+        oof_pred_matrix=price_hat_matrix,
+        y_true=price_true_all,
+        model_type="ridge",
+        positive=False,
     )
-    print("w_star (before shrinkage):", dict(zip(used_models, w_star)))
 
-    # 10. Ensemble - tuning lần 2: shrink weight về equal weight
-    best_lambda, w_opt = tune_ensemble_shrinkage(
-        price_hat_matrix=price_hat_matrix,
-        price_true=price_true_all,
-        w_star=w_star,
-        shrink_values=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
-    print("best_lambda:", best_lambda)
-    print("w_opt (final ensemble weights):", dict(zip(used_models, w_opt)))
+    # In thử weight nếu là Ridge
+    try:
+        coefs = meta_model.coef_
+        print("Meta learner coefficients (per base model):")
+        for name, w in zip(used_models, coefs):
+            print(f"  {name}: {w:.6f}")
+        print("Meta intercept:", meta_model.intercept_)
+    except Exception as e:
+        print("Cannot extract coefficients from meta model:", e)
+
+    # # 9. Ensemble - tuning lần 1: tìm weight tối ưu trên simplex
+    # w_star = tune_ensemble_weights_random_search(
+    #     price_hat_matrix=price_hat_matrix,
+    #     price_true=price_true_all,
+    #     n_samples=2000,
+    #     l2_shrink=0.0,
+    # )
+    # print("w_star (before shrinkage):", dict(zip(used_models, w_star)))
+
+    # # 10. Ensemble - tuning lần 2: shrink weight về equal weight
+    # best_lambda, w_opt = tune_ensemble_shrinkage(
+    #     price_hat_matrix=price_hat_matrix,
+    #     price_true=price_true_all,
+    #     w_star=w_star,
+    #     shrink_values=[0.0, 0.25, 0.5, 0.75, 1.0],
+    # )
+    # print("best_lambda:", best_lambda)
+    # print("w_opt (final ensemble weights):", dict(zip(used_models, w_opt)))
 
     # 11. Train full từng model trên train_val (trừ 100 ngày test cuối)
     #     và dự báo R_hat_test, rồi ensemble theo w_opt trên test
@@ -263,7 +283,9 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         print(f"Saved single-model submission for {model_name} to {sub_path}")
 
     R_hat_test_all = np.array(R_hat_test_all)  # shape (M,)
-    R_hat_test_ensemble = float(np.dot(w_opt, R_hat_test_all))
+    R_hat_test_ensemble = float(
+        predict_with_meta_learner(meta_model, R_hat_test_all)[0]
+    )
 
     # 12. Convert R_hat_test_ensemble thành path 100 ngày (chia đều)
     lp_last = df_target.loc[last_index_before_test, "lp"]
