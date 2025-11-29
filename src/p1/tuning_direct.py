@@ -282,7 +282,9 @@ def collect_validation_predictions_direct(
         y_hat = model.predict_100day_return(X_val)
 
         # convert sang price
-        price_true, price_hat = compute_price_endpoint_from_R(df_val, y_hat)
+        lp_val = df_val["lp"].values
+        price_true = np.exp(lp_val + y_val)
+        price_hat = np.exp(lp_val + y_hat)
 
         all_true.append(price_true)
         all_hat.append(price_hat)
