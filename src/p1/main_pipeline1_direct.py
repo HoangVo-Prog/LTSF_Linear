@@ -84,12 +84,19 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
 
     # 3. Build target direct 100d
+    # df_target, y_direct = build_direct_100d_target(
+    #     df_feat,
+    #     horizon=HORIZON,  # vẫn truyền, nhưng thực tế không dùng khi target_type="weighted_multi"
+    #     target_type="weighted_multi",
+    #     weighted_horizons=(20, 50, 100),
+    #     weighted_weights=(0.2, 0.3, 0.5),
+    # )
     df_target, y_direct = build_direct_100d_target(
         df_feat,
-        horizon=HORIZON,  # vẫn truyền, nhưng thực tế không dùng khi target_type="weighted_multi"
-        target_type="weighted_multi",
-        weighted_horizons=(20, 50, 100),
-        weighted_weights=(0.2, 0.3, 0.5),
+        horizon=HORIZON,
+        target_type="endpoint",         # vẫn là return 100d như cũ
+        huberize=True,
+        huber_percentiles=(1.0, 99.0),  # clip theo percentile 1 và 99
     )
     df_target["y_direct"] = y_direct
 
