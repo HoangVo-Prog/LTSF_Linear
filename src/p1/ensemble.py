@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple
 import numpy as np
 
 from sklearn.linear_model import Ridge, ElasticNet
+from sklearn.ensemble import GradientBoostingRegressor
 
 
 def compute_price_endpoint_from_R(
@@ -119,12 +120,11 @@ def train_stacking_meta_learner(
       N: số điểm validation (gộp tất cả fold)
       M: số model base
     y_true: shape (N,)
-      y_direct thực tế (log return 100 ngày)
-
+      target thực tế (ở đây là price endpoint, nếu bạn truyền price_true_all)
     model_type:
       - "ridge": RidgeRegression
       - "elasticnet": ElasticNet
-
+      - "gbdt": GradientBoostingRegressor (tree-based meta)
     positive:
       - Nếu True thì ép weight không âm (chỉ áp dụng cho Ridge).
     """
@@ -132,7 +132,6 @@ def train_stacking_meta_learner(
     y = np.asarray(y_true, dtype=float)
 
     if model_type == "ridge":
-        # alpha cố định hoặc bạn có thể cho một grid nhỏ
         meta = Ridge(
             alpha=1e-2,
             fit_intercept=True,
@@ -144,6 +143,14 @@ def train_stacking_meta_learner(
             alpha=1e-3,
             l1_ratio=0.5,
             max_iter=5000,
+            random_state=42,
+        )
+    elif model_type == "gbdt":
+        # meta tree nhỏ, tránh overfit
+        meta = GradientBoostingRegressor(
+            n_estimators=200,
+            learning_rate=0.03,
+            max_depth=2,
             random_state=42,
         )
     else:

@@ -11,6 +11,7 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HORIZON, RANDOM_STATE
 from evaluation_direct import compute_endpoint_price_from_direct, mse
+from ensemble_direct import compute_price_endpoint_from_R
 
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
@@ -164,6 +165,11 @@ def evaluate_model_one_fold_direct(
     feature_cols: List[str],
     horizon: int = HORIZON,
 ) -> float:
+    """
+    Train model trên fold, evaluate MSE trên price endpoint:
+      price_true_T = exp(lp_t + y_true)
+      price_hat_T  = exp(lp_t + y_hat)
+    """
     train_mask = fold["train_mask"]
     val_mask = fold["val_mask"]
 
@@ -177,12 +183,15 @@ def evaluate_model_one_fold_direct(
     y_train = df_train["y_direct"].values
 
     X_val = df_val[feature_cols]
-    # y_true = df_val["y_direct"].values  # không cần trực tiếp nữa
+    y_val = df_val["y_direct"].values
 
+    # fit trên log-return
     model.fit(X_train, y_train)
     y_hat = model.predict_100day_return(X_val)
 
-    price_true, price_hat = compute_endpoint_price_from_direct(df_val, y_hat)
+    # convert sang price dùng helper chung
+    price_true, price_hat = compute_price_endpoint_from_R(df_val, y_hat)
+
     return mse(price_true, price_hat)
 
 
@@ -244,8 +253,8 @@ def collect_validation_predictions_direct(
     """
     Chạy lại CV với best_config để collect:
       - price_true_all: shape (N,)
-      - price_hat_all: shape (N,)
-    (endpoint price tại t+H)
+      - price_hat_all:  shape (N,)
+    (endpoint price tại t+H, dùng cùng công thức với evaluation & test)
     """
     ModelClass = MODEL_REGISTRY[model_name]
 
@@ -266,16 +275,14 @@ def collect_validation_predictions_direct(
         y_train = df_train["y_direct"].values
 
         X_val = df_val[feature_cols]
-        y_val = df_val["y_direct"].values
+        y_val = df_val["y_direct"].values  # chỉ để align index
 
         model = ModelClass(best_config)
         model.fit(X_train, y_train)
         y_hat = model.predict_100day_return(X_val)
 
         # convert sang price
-        lp_val = df_val["lp"].values
-        price_true = np.exp(lp_val + y_val)
-        price_hat = np.exp(lp_val + y_hat)
+        price_true, price_hat = compute_price_endpoint_from_R(df_val, y_hat)
 
         all_true.append(price_true)
         all_hat.append(price_hat)
