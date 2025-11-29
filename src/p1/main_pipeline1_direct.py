@@ -222,6 +222,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     y_train_val = df_train_val["y_direct"].values
 
     lp_full = df_target["lp"].values
+    lp_last = df_target.loc[last_index_before_test, "lp"]
+
     R_hat_test_all = []
 
     from models_direct import MODEL_REGISTRY as REG
