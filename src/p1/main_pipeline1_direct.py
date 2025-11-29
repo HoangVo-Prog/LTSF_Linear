@@ -115,10 +115,10 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     # )
     
     # Multi scale momentum
-    df_target, y_direct = build_multi_scale_momentum_target(df_feat)
+    # df_target, y_direct = build_multi_scale_momentum_target(df_feat)
 
     # Directional momentum
-    # df_target, y_direct = build_directional_momentum_target(df_feat)
+    df_target, y_direct = build_directional_momentum_target(df_feat)
 
 
     df_target["y_direct"] = y_direct
