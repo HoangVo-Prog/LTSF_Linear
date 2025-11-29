@@ -38,12 +38,13 @@ class Direct100Model:
 
 class DirectElasticNetModel(Direct100Model):
     def __init__(self, config: Dict):
-        self.config = config
+        self.config = config or {}
         self.model = ElasticNet(
-            alpha=config.get("alpha", 1e-3),
-            l1_ratio=config.get("l1_ratio", 0.5),
+            alpha=self.config.get("alpha", 1e-3),
+            l1_ratio=self.config.get("l1_ratio", 0.5),
             random_state=RANDOM_STATE,
-            max_iter=config.get("max_iter", 5000),
+            max_iter=self.config.get("max_iter", 5000),
+            fit_intercept=True,
         )
 
     def fit(self, X_train, y_train, config=None):
@@ -55,10 +56,11 @@ class DirectElasticNetModel(Direct100Model):
 
 class DirectRidgeModel(Direct100Model):
     def __init__(self, config: Dict):
-        self.config = config
+        self.config = config or {}
         self.model = Ridge(
-            alpha=config.get("alpha", 1.0),
+            alpha=self.config.get("alpha", 1.0),
             random_state=RANDOM_STATE,
+            fit_intercept=True,
         )
 
     def fit(self, X_train, y_train, config=None):
@@ -72,15 +74,19 @@ class DirectXGBModel(Direct100Model):
     def __init__(self, config: Dict):
         if xgb is None:
             raise ImportError("xgboost not installed")
-        self.config = config
+        self.config = config or {}
         self.model = xgb.XGBRegressor(
-            n_estimators=config.get("n_estimators", 300),
-            max_depth=config.get("max_depth", 3),
-            learning_rate=config.get("learning_rate", 0.05),
-            subsample=config.get("subsample", 0.8),
-            colsample_bytree=config.get("colsample_bytree", 0.8),
+            objective="reg:squarederror",
+            n_estimators=self.config.get("n_estimators", 500),
+            max_depth=self.config.get("max_depth", 4),
+            learning_rate=self.config.get("learning_rate", 0.03),
+            subsample=self.config.get("subsample", 0.9),
+            colsample_bytree=self.config.get("colsample_bytree", 0.9),
+            reg_alpha=self.config.get("reg_alpha", 0.0),
+            reg_lambda=self.config.get("reg_lambda", 1.0),
             random_state=RANDOM_STATE,
-            tree_method=config.get("tree_method", "hist"),
+            tree_method=self.config.get("tree_method", "hist"),
+            n_jobs=-1,
         )
 
     def fit(self, X_train, y_train, config=None):
@@ -94,14 +100,22 @@ class DirectLGBMModel(Direct100Model):
     def __init__(self, config: Dict):
         if lgb is None:
             raise ImportError("lightgbm not installed")
-        self.config = config
+        self.config = config or {}
         self.model = lgb.LGBMRegressor(
-            n_estimators=config.get("n_estimators", 500),
-            max_depth=config.get("max_depth", -1),
-            learning_rate=config.get("learning_rate", 0.05),
-            subsample=config.get("subsample", 0.8),
-            colsample_bytree=config.get("colsample_bytree", 0.8),
+            objective=self.config.get("objective", "regression"),
+            metric=self.config.get("metric", "rmse"),
+            n_estimators=self.config.get("n_estimators", 500),
+            num_leaves=self.config.get("num_leaves", 31),
+            max_depth=self.config.get("max_depth", -1),
+            learning_rate=self.config.get("learning_rate", 0.03),
+            subsample=self.config.get("subsample", 0.9),
+            colsample_bytree=self.config.get("colsample_bytree", 0.9),
+            min_child_samples=self.config.get("min_child_samples", 20),
+            reg_alpha=self.config.get("reg_alpha", 0.0),
+            reg_lambda=self.config.get("reg_lambda", 1.0),
             random_state=RANDOM_STATE,
+            n_jobs=-1,
+            verbosity=-1,  # tắt spam warning
         )
 
     def fit(self, X_train, y_train, config=None):
@@ -113,11 +127,12 @@ class DirectLGBMModel(Direct100Model):
 
 class DirectRandomForestModel(Direct100Model):
     def __init__(self, config: Dict):
-        self.config = config
+        self.config = config or {}
         self.model = RandomForestRegressor(
-            n_estimators=config.get("n_estimators", 300),
-            max_depth=config.get("max_depth", None),
-            min_samples_leaf=config.get("min_samples_leaf", 1),
+            n_estimators=self.config.get("n_estimators", 400),
+            max_depth=self.config.get("max_depth", None),
+            min_samples_leaf=self.config.get("min_samples_leaf", 1),
+            max_features=self.config.get("max_features", "sqrt"),
             random_state=RANDOM_STATE,
             n_jobs=-1,
         )
