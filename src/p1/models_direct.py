@@ -20,6 +20,9 @@ except ImportError:
 
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import ElasticNet, Ridge, LinearRegression
+
 
 
 class Direct100Model:
@@ -36,9 +39,51 @@ class Direct100Model:
         raise NotImplementedError
 
 
-class DirectElasticNetModel(Direct100Model):
+class _ScaledLinearBase(Direct100Model):
+    """
+    Mixin cho các model linear:
+      - Chuẩn hóa X bằng StandardScaler
+      - Chuẩn hóa y (tùy chọn)
+    """
+    def __init__(self):
+        self.scaler_X: StandardScaler | None = None
+        self.y_mean_: float = 0.0
+        self.y_std_: float = 1.0
+        self.scale_target: bool = True  # default, config có thể override
+        self.model = None
+
+    def _fit_scalers(self, X: pd.DataFrame, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        self.scaler_X = StandardScaler()
+        X_scaled = self.scaler_X.fit_transform(X)
+
+        if self.scale_target:
+            self.y_mean_ = float(np.mean(y))
+            self.y_std_ = float(np.std(y))
+            if self.y_std_ == 0.0:
+                self.y_std_ = 1.0
+            y_scaled = (y - self.y_mean_) / self.y_std_
+        else:
+            self.y_mean_ = 0.0
+            self.y_std_ = 1.0
+            y_scaled = y.astype(float)
+
+        return X_scaled, y_scaled
+
+    def _transform_X(self, X: pd.DataFrame) -> np.ndarray:
+        if self.scaler_X is None:
+            return X.values.astype(float)
+        return self.scaler_X.transform(X)
+
+    def _inverse_y(self, y_scaled: np.ndarray) -> np.ndarray:
+        return y_scaled * self.y_std_ + self.y_mean_
+    
+
+class DirectElasticNetModel(_ScaledLinearBase):
     def __init__(self, config: Dict):
+        super().__init__()
         self.config = config or {}
+        self.scale_target = self.config.get("scale_target", True)
+
         self.model = ElasticNet(
             alpha=self.config.get("alpha", 1e-3),
             l1_ratio=self.config.get("l1_ratio", 0.5),
@@ -48,15 +93,21 @@ class DirectElasticNetModel(Direct100Model):
         )
 
     def fit(self, X_train, y_train, config=None):
-        self.model.fit(X_train, y_train)
+        X_scaled, y_scaled = self._fit_scalers(X_train, y_train)
+        self.model.fit(X_scaled, y_scaled)
 
     def predict_100day_return(self, X_input):
-        return self.model.predict(X_input)
+        X_scaled = self._transform_X(X_input)
+        y_scaled_pred = self.model.predict(X_scaled)
+        return self._inverse_y(y_scaled_pred)
 
 
-class DirectRidgeModel(Direct100Model):
+class DirectRidgeModel(_ScaledLinearBase):
     def __init__(self, config: Dict):
+        super().__init__()
         self.config = config or {}
+        self.scale_target = self.config.get("scale_target", True)
+
         self.model = Ridge(
             alpha=self.config.get("alpha", 1.0),
             random_state=RANDOM_STATE,
@@ -64,10 +115,13 @@ class DirectRidgeModel(Direct100Model):
         )
 
     def fit(self, X_train, y_train, config=None):
-        self.model.fit(X_train, y_train)
+        X_scaled, y_scaled = self._fit_scalers(X_train, y_train)
+        self.model.fit(X_scaled, y_scaled)
 
     def predict_100day_return(self, X_input):
-        return self.model.predict(X_input)
+        X_scaled = self._transform_X(X_input)
+        y_scaled_pred = self.model.predict(X_scaled)
+        return self._inverse_y(y_scaled_pred)
 
 
 class DirectXGBModel(Direct100Model):
@@ -205,37 +259,51 @@ class DirectKalmanModel(Direct100Model):
         raise NotImplementedError("Kalman regression predict not implemented yet")
 
 
-class DirectDLinearModel(Direct100Model):
+class DirectDLinearModel(_ScaledLinearBase):
     """
-    Placeholder cho DLinear.
-    DLinear chuẩn là mô hình theo chuỗi thời gian, cần sequence input.
-    Với Pipeline 1 (feature at t -> scalar R_100), bạn có thể implement bản đơn giản.
+    DLinear đơn giản: LinearRegression trên feature vector với scaler.
+    (Ở LTSF gốc DLinear hoạt động trên cửa sổ chuỗi; ở đây ta dùng phiên bản
+    linear regression tương đương trong không gian feature.)
     """
-
     def __init__(self, config: Dict):
-        self.config = config
-        # TODO: torch model
+        super().__init__()
+        self.config = config or {}
+        self.scale_target = self.config.get("scale_target", True)
+        self.model = LinearRegression(
+            fit_intercept=self.config.get("fit_intercept", True)
+        )
 
     def fit(self, X_train, y_train, config=None):
-        raise NotImplementedError("DLinear not implemented yet")
+        X_scaled, y_scaled = self._fit_scalers(X_train, y_train)
+        self.model.fit(X_scaled, y_scaled)
 
     def predict_100day_return(self, X_input):
-        raise NotImplementedError("DLinear not implemented yet")
+        X_scaled = self._transform_X(X_input)
+        y_scaled_pred = self.model.predict(X_scaled)
+        return self._inverse_y(y_scaled_pred)
 
 
-class DirectNLinearModel(Direct100Model):
+class DirectNLinearModel(_ScaledLinearBase):
     """
-    Placeholder cho NLinear.
+    NLinear: LinearRegression không intercept, thường dùng với target đã chuẩn hóa.
     """
-
     def __init__(self, config: Dict):
-        self.config = config
+        super().__init__()
+        self.config = config or {}
+        # Với NLinear có thể tắt scale_target nếu muốn, nhưng mặc định vẫn True
+        self.scale_target = self.config.get("scale_target", True)
+        self.model = LinearRegression(
+            fit_intercept=self.config.get("fit_intercept", False)
+        )
 
     def fit(self, X_train, y_train, config=None):
-        raise NotImplementedError("NLinear not implemented yet")
+        X_scaled, y_scaled = self._fit_scalers(X_train, y_train)
+        self.model.fit(X_scaled, y_scaled)
 
     def predict_100day_return(self, X_input):
-        raise NotImplementedError("NLinear not implemented yet")
+        X_scaled = self._transform_X(X_input)
+        y_scaled_pred = self.model.predict(X_scaled)
+        return self._inverse_y(y_scaled_pred)
 
 
 # Registry: map tên model -> (class, grid_builder)
@@ -251,3 +319,5 @@ MODEL_REGISTRY = {
     "dlinear": DirectDLinearModel,
     "nlinear": DirectNLinearModel,
 }
+
+    

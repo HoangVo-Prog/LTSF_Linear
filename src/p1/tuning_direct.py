@@ -15,83 +15,141 @@ from evaluation_direct import compute_endpoint_price_from_direct, mse
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     """
-    Sinh grid coarse cho từng model type.
-    Bạn có thể chỉnh theo tài nguyên thật.
+    Sinh grid khá sâu cho từng model type.
+    Nếu quá nặng có thể cắt bớt bằng max_configs khi gọi tune_model_direct.
     """
+    # 1. ElasticNet: nhiều alpha + l1_ratio + scale_target
     if model_name == "elasticnet":
-        alphas = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2]
-        l1_ratios = [0.1, 0.5, 0.9]
+        alphas = [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2]
+        l1_ratios = [0.1, 0.3, 0.5, 0.7, 0.9]
+        scale_targets = [True, False]
         grid = []
         for a in alphas:
             for r in l1_ratios:
-                grid.append({"alpha": a, "l1_ratio": r, "max_iter": 5000})
+                for st in scale_targets:
+                    grid.append(
+                        {
+                            "alpha": a,
+                            "l1_ratio": r,
+                            "max_iter": 5000,
+                            "scale_target": st,
+                        }
+                    )
         return grid
 
+    # 2. Ridge: alpha logspace + scale_target
     if model_name == "ridge":
-        alphas = [1e-4, 1e-3, 1e-2, 1e-1, 1.0]
-        return [{"alpha": a} for a in alphas]
+        alphas = [1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 1e-1, 1.0]
+        scale_targets = [True, False]
+        grid = []
+        for a in alphas:
+            for st in scale_targets:
+                grid.append({"alpha": a, "scale_target": st})
+        return grid
 
+    # 3. XGBoost: sâu hơn nhưng vẫn vừa phải
     if model_name == "xgboost":
         grid = []
-        for n in [300, 600]:
+        for n in [400, 800]:
             for depth in [3, 5]:
-                for lr in [0.03, 0.05]:
-                    grid.append(
-                        {
-                            "n_estimators": n,
-                            "max_depth": depth,
-                            "learning_rate": lr,
-                            "subsample": 0.8,
-                            "colsample_bytree": 0.8,
-                            "tree_method": "hist",
-                        }
-                    )
+                for lr in [0.02, 0.03, 0.05]:
+                    for subs in [0.8, 1.0]:
+                        # đơn giản hóa colsample/reg cho đỡ nổ grid
+                        grid.append(
+                            {
+                                "n_estimators": n,
+                                "max_depth": depth,
+                                "learning_rate": lr,
+                                "subsample": subs,
+                                "colsample_bytree": 0.8,
+                                "tree_method": "hist",
+                                "reg_lambda": 1.0,
+                                "reg_alpha": 0.0,
+                            }
+                        )
         return grid
 
+    # 4. LightGBM: thêm depth, lr, subsample, min_child_samples
     if model_name == "lgbm":
         grid = []
-        for n in [300, 600]:
-            for depth in [-1, 6]:
-                for lr in [0.03, 0.05]:
-                    grid.append(
-                        {
-                            "n_estimators": n,
-                            "max_depth": depth,
-                            "learning_rate": lr,
-                            "subsample": 0.8,
-                            "colsample_bytree": 0.8,
-                        }
-                    )
+        for n in [400, 800]:
+            for depth in [-1, 4, 6]:
+                for lr in [0.02, 0.03, 0.05]:
+                    for subs in [0.8, 1.0]:
+                        for mcs in [20, 40]:
+                            grid.append(
+                                {
+                                    "n_estimators": n,
+                                    "max_depth": depth,
+                                    "learning_rate": lr,
+                                    "subsample": subs,
+                                    "colsample_bytree": 0.8,
+                                    "min_child_samples": mcs,
+                                }
+                            )
         return grid
 
+    # 5. RandomForest: thêm n_estimators, depth, min_samples_leaf, max_features
     if model_name == "random_forest":
         grid = []
-        for n in [200, 400]:
+        for n in [200, 400, 800]:
             for depth in [None, 6, 10]:
+                for leaf in [1, 2, 4]:
+                    for mf in ["sqrt", "log2"]:
+                        grid.append(
+                            {
+                                "n_estimators": n,
+                                "max_depth": depth,
+                                "min_samples_leaf": leaf,
+                                "max_features": mf,
+                            }
+                        )
+        return grid
+
+    # 6. GradientBoosting (GBDT): thêm n, depth, lr, subsample
+    if model_name == "gbdt":
+        grid = []
+        for n in [200, 400, 800]:
+            for depth in [2, 3, 4]:
+                for lr in [0.02, 0.03, 0.05]:
+                    for subs in [0.8, 1.0]:
+                        grid.append(
+                            {
+                                "n_estimators": n,
+                                "max_depth": depth,
+                                "learning_rate": lr,
+                                "subsample": subs,
+                            }
+                        )
+        return grid
+
+    # 7. DLinear: chơi với scale_target + fit_intercept
+    if model_name == "dlinear":
+        grid = []
+        for st in [True, False]:
+            for fi in [True, False]:
                 grid.append(
                     {
-                        "n_estimators": n,
-                        "max_depth": depth,
-                        "min_samples_leaf": 1,
+                        "scale_target": st,
+                        "fit_intercept": fi,
                     }
                 )
         return grid
 
-    if model_name == "gbdt":
+    # 8. NLinear: tương tự nhưng mặc định hay dùng không intercept
+    if model_name == "nlinear":
         grid = []
-        for n in [200, 400]:
-            for depth in [2, 3]:
-                for lr in [0.03, 0.05]:
-                    grid.append(
-                        {
-                            "n_estimators": n,
-                            "max_depth": depth,
-                            "learning_rate": lr,
-                        }
-                    )
+        for st in [True, False]:
+            for fi in [False, True]:
+                grid.append(
+                    {
+                        "scale_target": st,
+                        "fit_intercept": fi,
+                    }
+                )
         return grid
 
-    # Rolling, Kalman, DLinear, NLinear: tạm thời chưa có grid
+    # Rolling, Kalman: tạm thời chưa có grid
     return [{}]
 
 
