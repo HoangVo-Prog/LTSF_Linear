@@ -120,8 +120,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         "gbdt",
         # "rolling_elasticnet",
         # "kalman",
-        "dlinear",
-        "nlinear",
+        # "dlinear",
+        # "nlinear",
     ]
 
     best_configs = {}
@@ -211,13 +211,20 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
     # In thử weight nếu là Ridge
     try:
-        coefs = meta_model.coef_
-        print("Meta learner coefficients (per base model):")
-        for name, w in zip(used_models, coefs):
-            print(f"  {name}: {w:.6f}")
-        print("Meta intercept:", meta_model.intercept_)
+        if hasattr(meta_model, "coef_"):
+            print("Meta learner coefficients (per base model):")
+            for name, w in zip(used_models, meta_model.coef_):
+                print(f"  {name}: {w:.6f}")
+            print("Meta intercept:", meta_model.intercept_)
+        elif hasattr(meta_model, "feature_importances_"):
+            print("Meta learner feature importances_ (tree model):")
+            for name, w in zip(used_models, meta_model.feature_importances_):
+                print(f"  {name}: {w:.6f}")
+        else:
+            print("Meta learner has no coefficients or feature_importances_.")
     except Exception as e:
-        print("Cannot extract coefficients from meta model:", e)
+        print("Meta inspect error:", e)
+
 
     # # 9. Ensemble - tuning lần 1: tìm weight tối ưu trên simplex
     # w_star = tune_ensemble_weights_random_search(
