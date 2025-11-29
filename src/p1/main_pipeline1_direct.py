@@ -205,7 +205,7 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
     meta_model = train_stacking_meta_learner(
         oof_pred_matrix=price_hat_matrix,
         y_true=price_true_all,
-        model_type="gbdt",
+        model_type="ridge",
         positive=False,
     )
 

@@ -352,6 +352,7 @@ def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
 
     # Default
     return [{}]
+
 def mse(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean((a - b) ** 2))
 
