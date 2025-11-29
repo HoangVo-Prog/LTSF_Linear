@@ -11,7 +11,6 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HORIZON, RANDOM_STATE
 from evaluation_direct import compute_endpoint_price_from_direct, mse
-from ensemble_direct import compute_price_endpoint_from_R
 
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
@@ -190,8 +189,9 @@ def evaluate_model_one_fold_direct(
     y_hat = model.predict_100day_return(X_val)
 
     # convert sang price dùng helper chung
-    price_true, price_hat = compute_price_endpoint_from_R(df_val, y_hat)
-
+    lp_val = df_val["lp"].values
+    price_true = np.exp(lp_val + y_val)
+    price_hat = np.exp(lp_val + y_hat)
     return mse(price_true, price_hat)
 
 
