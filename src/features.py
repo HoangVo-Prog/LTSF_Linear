@@ -106,11 +106,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     for win in [5, 10, 20, 30, 60, 120]:
         df[f"vol_{win}"] = _rolling_std(df["ret_1d"], win)
 
-    # Moving averages giá
+    # Moving averages giá (trên close)
     for win in [5, 10, 20, 30, 60, 90, 120, 200]:
         df[f"sma_{win}"] = _rolling_mean(df["close"], win)
 
-    # EMA các horizon
+    # EMA các horizon (trên close)
     for span in [5, 12, 20, 26, 50]:
         df[f"ema_{span}"] = df["close"].ewm(span=span, adjust=False).mean()
 
@@ -239,5 +239,43 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     if lag_data:
         lag_df = pd.DataFrame(lag_data, index=df.index)
         df = pd.concat([df, lag_df], axis=1)
+
+    # ======================================================
+    # 100d aligned features và long horizon trend on lp
+    # ======================================================
+
+    # 1) 100 ngày quá khứ: return, drift, volatility
+    df["ret_100d_back"] = df["lp"] - df["lp"].shift(100)
+    df["drift_100d_back"] = df["ret_100d_back"] / 100.0
+    df["vol_100d_back"] = _rolling_std(df["ret_1d"], 100)
+
+    # 2) Long horizon EMA/SMA trên lp (log price)
+    for win in [20, 60, 120]:
+        df[f"ema_lp_{win}"] = df["lp"].ewm(span=win, adjust=False).mean()
+        df[f"sma_lp_{win}"] = _rolling_mean(df["lp"], win)
+        df[f"lp_minus_ema_{win}"] = df["lp"] - df[f"ema_lp_{win}"]
+        df[f"lp_minus_sma_{win}"] = df["lp"] - df[f"sma_lp_{win}"]
+
+    # 3) Volatility ratio và vol-of-vol trên return
+    #    (vol_20, vol_60, vol_120 đã có ở trên)
+    if all(col in df.columns for col in ["vol_20", "vol_60", "vol_120"]):
+        df["vol_ratio_20_60"] = df["vol_20"] / (df["vol_60"] + 1e-8)
+        df["vol_ratio_60_120"] = df["vol_60"] / (df["vol_120"] + 1e-8)
+
+    abs_ret = df["ret_1d"].abs()
+    df["ret_vol_of_vol_20"] = _rolling_std(abs_ret, 20)
+
+    # 4) Vị trí trong range 60 và 120 ngày (giúp model hiểu cổ đang ở đáy hay đỉnh)
+    for win in [60, 120]:
+        roll_max = df["close"].rolling(window=win, min_periods=win).max()
+        roll_min = df["close"].rolling(window=win, min_periods=win).min()
+        df[f"pos_in_range_{win}"] = (df["close"] - roll_min) / (roll_max - roll_min + 1e-8)
+
+    # 5) Volume regime: ratio 20/60 và spike flag
+    if "vol_sma_20" in df.columns and "vol_sma_60" in df.columns:
+        df["vol_ma_ratio_20_60"] = df["vol_sma_20"] / (df["vol_sma_60"] + 1e-8)
+
+    # spike volume mạnh so với 20 ngày
+    df["is_vol_spike_20"] = (df["vol_z_20"] > 2.0).astype(float)
 
     return df
