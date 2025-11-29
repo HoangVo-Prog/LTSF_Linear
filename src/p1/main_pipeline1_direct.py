@@ -4,7 +4,7 @@ import json, os
 import numpy as np
 import pandas as pd
 
-from targets_direct import build_direct_100d_target, build_multi_scale_momentum_target, build_directional_momentum_target
+from targets_direct import build_direct_100d_target
 from models_direct import MODEL_REGISTRY
 from tuning_direct import (
     tune_model_direct,
