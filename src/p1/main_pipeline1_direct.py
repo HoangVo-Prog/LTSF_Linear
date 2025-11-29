@@ -151,13 +151,21 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
     print("Best configs per model:", best_configs)
     print("CV scores per model:", best_scores)
-    
+
     params_dir = "model_params"
     os.makedirs(params_dir, exist_ok=True)
 
-    # Lưu chung
-    with open(os.path.join(params_dir, "best_params_all_models.json"), "w") as f:
-        json.dump(best_configs, f, indent=2)
+    all_params = {
+        "best_configs": best_configs,
+        "best_scores": best_scores
+    }
+
+    output_path = os.path.join(params_dir, "best_params_all_models.json")
+
+    with open(output_path, "w") as f:
+        json.dump(all_params, f, indent=2)
+
+    print(f"Saved all params to: {output_path}")
 
     # 8. Chạy lại CV với config tốt nhất để collect validation predictions
     #    Chuẩn bị data cho ensemble
