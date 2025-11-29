@@ -6,11 +6,12 @@ import pandas as pd
 
 
 from models_direct import MODEL_REGISTRY, Direct100Model
-from ensemble import compute_price_endpoint_from_R, mse
 
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HORIZON, RANDOM_STATE
+from evaluation_direct import compute_endpoint_price_from_direct, mse
+
 
 def build_grid_for_model(model_name: str) -> List[Dict[str, Any]]:
     """
@@ -105,11 +106,6 @@ def evaluate_model_one_fold_direct(
     feature_cols: List[str],
     horizon: int = HORIZON,
 ) -> float:
-    """
-    Train trên fold, evaluate MSE trên price endpoint:
-      price_true_T = exp(lp_t + y_true)
-      price_hat_T  = exp(lp_t + y_hat)
-    """
     train_mask = fold["train_mask"]
     val_mask = fold["val_mask"]
 
@@ -123,17 +119,12 @@ def evaluate_model_one_fold_direct(
     y_train = df_train["y_direct"].values
 
     X_val = df_val[feature_cols]
-    y_val = df_val["y_direct"].values
+    # y_true = df_val["y_direct"].values  # không cần trực tiếp nữa
 
-    # fit trên log-return
     model.fit(X_train, y_train)
     y_hat = model.predict_100day_return(X_val)
 
-    # convert sang price
-    lp_val = df_val["lp"].values
-    price_true = np.exp(lp_val + y_val)
-    price_hat = np.exp(lp_val + y_hat)
-
+    price_true, price_hat = compute_endpoint_price_from_direct(df_val, y_hat)
     return mse(price_true, price_hat)
 
 

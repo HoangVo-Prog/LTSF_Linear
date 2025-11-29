@@ -7,6 +7,10 @@ from sklearn.linear_model import ElasticNet
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
 
+
+from p1.evaluation_direct import compute_endpoint_price_from_direct
+
+
 from config import TOP_K_FEATURES, RANDOM_STATE
 
 try:
@@ -217,6 +221,7 @@ def aggregate_feature_importances_multi_model(
 # 1. Direct pipeline (scalar)
 # ==========================
 
+
 def run_feature_selection_direct(
     df_direct: pd.DataFrame,
     folds: List[Dict],
@@ -225,16 +230,6 @@ def run_feature_selection_direct(
     base_model_for_importance: ElasticNet = None,
     min_folds_used: int = 1,
 ) -> Tuple[List[str], pd.DataFrame]:
-    """
-    Feature selection cho Pipeline 1 Direct 100d.
-
-    df_direct:
-      - Đã build features, đã có y_direct
-    folds:
-      - output của make_folds trên df_direct["time"]
-    feature_cols:
-      - list tên feature ban đầu
-    """
     per_fold_importances: Dict[str, List[pd.Series]] = {}
 
     for fold in folds:
@@ -245,16 +240,22 @@ def run_feature_selection_direct(
         df_val = df_direct.loc[val_mask]
 
         X_train = df_train[feature_cols]
-        y_train = df_train["y_direct"].values
+        # y_train_price: endpoint price từ y_direct của train
+        # dùng cùng công thức lp + y_direct như tuning
+        lp_train = df_train["lp"].values
+        y_train_direct = df_train["y_direct"].values
+        y_train_price = np.exp(lp_train + y_train_direct)
 
         X_val = df_val[feature_cols]
-        y_val = df_val["y_direct"].values
+        lp_val = df_val["lp"].values
+        y_val_direct = df_val["y_direct"].values
+        y_val_price = np.exp(lp_val + y_val_direct)
 
         imp_dict = compute_feature_importances_all_models_per_fold(
             X_train,
-            y_train,
+            y_train_price,
             X_val,
-            y_val,
+            y_val_price,
             base_model_enet=base_model_for_importance,
         )
 
@@ -268,7 +269,6 @@ def run_feature_selection_direct(
     )
 
     return selected_features, rank_df
-
 
 # ==========================
 # 2. Multi step pipeline
