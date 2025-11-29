@@ -110,7 +110,7 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         # Huber cải tiến
         huberize=True,
         huber_outer_percentiles=(0.5, 99.5),
-        huber_k_pos=0.8,   # cắt bớt các cú tăng quá mạnh
+        huber_k_pos=0.5,   # cắt bớt các cú tăng quá mạnh
         huber_k_neg=2.0,   # cho phép cú rơi âm lớn hơn
     )
 
