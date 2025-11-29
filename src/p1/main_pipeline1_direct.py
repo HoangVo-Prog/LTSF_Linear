@@ -10,7 +10,7 @@ from tuning_direct import (
     tune_model_direct,
     collect_validation_predictions_direct,
 )
-from src.p1.ensemble_direct import (
+from ensemble_direct import (
     tune_ensemble_weights_random_search,
     tune_ensemble_shrinkage, train_stacking_meta_learner, predict_with_meta_learner,
 )
