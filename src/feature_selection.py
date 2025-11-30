@@ -398,7 +398,7 @@ def run_feature_selection_direct(
         "ema_5", "ema_12", "ema_20", "ema_26", "ema_50",
         "ret_120d",
         "bb_low_20", "bb_up_20", "bb_low_60", "bb_up_60",
-        "dd_60", "dd_120", "dd_200",
+        "dd_60", "dd_120", "dd_200", # TODO: xem xét documentation 
         "month", "month_sin", "month_cos",
     ]
 
