@@ -10,9 +10,9 @@ from tuning_direct import (
     tune_model_direct,
     collect_validation_predictions_direct,
 )
-from ensemble import (
+from ensemble_direct import (
     tune_ensemble_weights_random_search,
-    tune_ensemble_shrinkage,
+    tune_ensemble_shrinkage, train_stacking_meta_learner, predict_with_meta_learner,
 )
 
 import warnings
@@ -36,7 +36,7 @@ from data_utils import (
     winsorize_series,
 )
 
-from config import HORIZON, TRAIN_CSV
+from config import HORIZON, TRAIN_CSV, TOP_K_FEATURES, N_FOLDS
 from submission import make_submission
 from features import build_features
 from splits import make_folds, get_test_indices
@@ -76,6 +76,9 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
     # 2. Feature engineering
     df_feat = build_features(df)
+    
+    df_feat_full = df_feat.copy()
+
 
     # 3. Build target direct 100d
     df_target, y_direct = build_direct_100d_target(df_feat, horizon=HORIZON)
@@ -100,8 +103,8 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
         df_direct=df_target,
         folds=folds,
         feature_cols=feature_cols_all,
-        top_k=80,
-        min_folds_used=1,
+        top_k=TOP_K_FEATURES,
+        min_folds_used=N_FOLDS,
     )
     feature_cols = selected_features
     print("Selected features (direct 100d):", feature_cols)
@@ -196,82 +199,184 @@ def run_pipeline1_direct(train_csv: str, submission_output: str) -> None:
 
     price_hat_matrix = np.vstack(price_hat_matrix_list).T  # shape (N, M)
     print("Ensemble uses models:", used_models)
-
-    # 9. Ensemble - tuning lần 1: tìm weight tối ưu trên simplex
-    w_star = tune_ensemble_weights_random_search(
-        price_hat_matrix=price_hat_matrix,
-        price_true=price_true_all,
-        n_samples=2000,
-        l2_shrink=0.0,
+    
+    
+    # Stacking meta learner trên OOF prediction
+    meta_model = train_stacking_meta_learner(
+        oof_pred_matrix=price_hat_matrix,
+        y_true=price_true_all,
+        model_type="ridge",
+        positive=False,
     )
-    print("w_star (before shrinkage):", dict(zip(used_models, w_star)))
 
-    # 10. Ensemble - tuning lần 2: shrink weight về equal weight
-    best_lambda, w_opt = tune_ensemble_shrinkage(
-        price_hat_matrix=price_hat_matrix,
-        price_true=price_true_all,
-        w_star=w_star,
-        shrink_values=[0.0, 0.25, 0.5, 0.75, 1.0],
-    )
-    print("best_lambda:", best_lambda)
-    print("w_opt (final ensemble weights):", dict(zip(used_models, w_opt)))
+    # In thử weight nếu là Ridge
+    try:
+        if hasattr(meta_model, "coef_"):
+            print("Meta learner coefficients (per base model):")
+            for name, w in zip(used_models, meta_model.coef_):
+                print(f"  {name}: {w:.6f}")
+            print("Meta intercept:", meta_model.intercept_)
+        elif hasattr(meta_model, "feature_importances_"):
+            print("Meta learner feature importances_ (tree model):")
+            for name, w in zip(used_models, meta_model.feature_importances_):
+                print(f"  {name}: {w:.6f}")
+        else:
+            print("Meta learner has no coefficients or feature_importances_.")
+    except Exception as e:
+        print("Meta inspect error:", e)
+
+
+    # # 9. Ensemble - tuning lần 1: tìm weight tối ưu trên simplex
+    # w_star = tune_ensemble_weights_random_search(
+    #     price_hat_matrix=price_hat_matrix,
+    #     price_true=price_true_all,
+    #     n_samples=2000,
+    #     l2_shrink=0.0,
+    # )
+    # print("w_star (before shrinkage):", dict(zip(used_models, w_star)))
+
+    # # 10. Ensemble - tuning lần 2: shrink weight về equal weight
+    # best_lambda, w_opt = tune_ensemble_shrinkage(
+    #     price_hat_matrix=price_hat_matrix,
+    #     price_true=price_true_all,
+    #     w_star=w_star,
+    #     shrink_values=[0.0, 0.25, 0.5, 0.75, 1.0],
+    # )
+    # print("best_lambda:", best_lambda)
+    # print("w_opt (final ensemble weights):", dict(zip(used_models, w_opt)))
 
     # 11. Train full từng model trên train_val (trừ 100 ngày test cuối)
     #     và dự báo R_hat_test, rồi ensemble theo w_opt trên test
-    test_info = get_test_indices(df_target["time"], horizon=HORIZON)
-    train_val_mask = test_info["train_val_mask"]
-    last_index_before_test = np.where(train_val_mask)[0][-1]
+    # test_info = get_test_indices(df_target["time"], horizon=HORIZON)
+    # train_val_mask = test_info["train_val_mask"]
+    # last_index_before_test = np.where(train_val_mask)[0][-1]
 
-    df_train_val = df_target.loc[train_val_mask]
-    X_train_val = df_train_val[feature_cols]
-    y_train_val = df_train_val["y_direct"].values
+    # df_train_val = df_target.loc[train_val_mask]
+    # X_train_val = df_train_val[feature_cols]
+    # y_train_val = df_train_val["y_direct"].values
 
-    lp_full = df_target["lp"].values
-    lp_last = df_target.loc[last_index_before_test, "lp"]
-
-    R_hat_test_all = []
-
-    from models_direct import MODEL_REGISTRY as REG
+    # lp_full = df_target["lp"].values
+    # lp_last = df_target.loc[last_index_before_test, "lp"]
     
+    from models_direct import MODEL_REGISTRY as REG
+
+    X_full = df_target[feature_cols].values
+    y_full = df_target["y_direct"].values
+
+    # Điểm anchor cuối cùng của chuỗi gốc
+    last_row_full = df_feat_full.iloc[[-1]]
+    lp_last = float(df_feat_full["lp"].iloc[-1])
+
+
+    # R_hat_test_all = []
+
+    # submissions_dir = "submissions_models"
+    # os.makedirs(submissions_dir, exist_ok=True)
+
+    # for i, model_name in enumerate(used_models):
+    #     cfg = best_configs[model_name]
+    #     ModelClass = REG[model_name]
+    #     model = ModelClass(cfg)
+
+    #     # Fit full
+    #     model.fit(X_train_val, y_train_val)
+
+    #     # Predict từ điểm cuối trước test
+    #     X_last = df_target.loc[[last_index_before_test], feature_cols]
+    #     R_hat_test = model.predict_100day_return(X_last)[0]
+    #     R_hat_test_all.append(R_hat_test)
+
+    #     # NEW: convert sang price endpoint
+    #     price_hat_test = float(np.exp(lp_last + R_hat_test))
+
+    #     # Build path riêng cho model (như cũ, nếu bạn vẫn muốn lưu submission từng model)
+    #     r_daily_model = R_hat_test / HORIZON
+    #     lp_path_model = lp_last + np.arange(1, HORIZON + 1) * r_daily_model
+    #     price_path_model = np.exp(lp_path_model)
+
+    #     sub_path = os.path.join(submissions_dir, f"submission_{model_name}.csv")
+    #     make_submission(price_path_model, sub_path)
+    #     print(f"Saved single-model submission for {model_name} to {sub_path}")
+
+    #     # Lưu thêm price_hat_test cho meta
+    #     if i == 0:
+    #         price_hat_test_all = [price_hat_test]
+    #     else:
+    #         price_hat_test_all.append(price_hat_test)
+
+    # R_hat_test_all = np.array(R_hat_test_all)          # (M,)
+    # price_hat_test_all = np.array(price_hat_test_all)  # (M,)
+
+    # # Ensemble trên price bằng meta learner
+    # price_hat_test_ensemble = float(
+    #     predict_with_meta_learner(meta_model, price_hat_test_all)[0]
+    # )
+
+    # # Convert ngược về log-return 100 ngày
+    # R_hat_test_ensemble = np.log(price_hat_test_ensemble) - lp_last
+
+
+    # # 12. Convert R_hat_test_ensemble thành path 100 ngày (chia đều)
+    # lp_last = df_target.loc[last_index_before_test, "lp"]
+    # r_daily = R_hat_test_ensemble / HORIZON
+    # lp_path = lp_last + np.arange(1, HORIZON + 1) * r_daily
+    # price_path = np.exp(lp_path)
+
+    # # 13. Xuất submission
+    # make_submission(price_path, submission_output)
+    # print("Submission saved to:", submission_output)
     submissions_dir = "submissions_models"
     os.makedirs(submissions_dir, exist_ok=True)
 
-    for i, model_name in enumerate(used_models):
+    base_price_hat_T_list = []  # endpoint price T+100 cho từng model
+
+    for model_name in used_models:
         cfg = best_configs[model_name]
         ModelClass = REG[model_name]
         model = ModelClass(cfg)
 
-        # Fit full
-        model.fit(X_train_val, y_train_val)
+        # Fit full trên toàn bộ dữ liệu có label
+        model.fit(X_full, y_full)
 
-        # Predict từ điểm cuối trước test
-        X_last = df_target.loc[[last_index_before_test], feature_cols]
-        R_hat_test = model.predict_100day_return(X_last)[0]
-        R_hat_test_all.append(R_hat_test)
-        
-        # Build path cho riêng model này (option: chia đều R_100)
+        # Lấy feature tại thời điểm cuối cùng
+        X_last = last_row_full[feature_cols]
+        R_hat_test = float(model.predict_100day_return(X_last)[0])
+
+        # Endpoint price của model này tại T+100
+        price_hat_T = float(np.exp(lp_last + R_hat_test))
+        base_price_hat_T_list.append(price_hat_T)
+
+        # Optional: lưu thêm submission riêng từng model
         r_daily_model = R_hat_test / HORIZON
         lp_path_model = lp_last + np.arange(1, HORIZON + 1) * r_daily_model
         price_path_model = np.exp(lp_path_model)
 
-        # Lưu submission riêng cho model
         sub_path = os.path.join(submissions_dir, f"submission_{model_name}.csv")
         make_submission(price_path_model, sub_path)
         print(f"Saved single-model submission for {model_name} to {sub_path}")
 
-    R_hat_test_all = np.array(R_hat_test_all)  # shape (M,)
-    R_hat_test_ensemble = float(np.dot(w_opt, R_hat_test_all))
+    if len(base_price_hat_T_list) == 0:
+        raise RuntimeError("No base model predictions for submission")
 
-    # 12. Convert R_hat_test_ensemble thành path 100 ngày (chia đều)
-    lp_last = df_target.loc[last_index_before_test, "lp"]
+    base_price_hat_T = np.array(base_price_hat_T_list)  # shape (M,)
+
+    # 12. Ensemble endpoint price bằng meta model (stacking trên price)
+    price_hat_T_ensemble = float(
+        predict_with_meta_learner(meta_model, base_price_hat_T)[0]
+    )
+
+    # 13. Convert endpoint price ensemble thành path 100 ngày
+    #     R_hat_ensemble = lp_T+100 - lp_last
+    R_hat_test_ensemble = np.log(price_hat_T_ensemble) - lp_last
     r_daily = R_hat_test_ensemble / HORIZON
+
     lp_path = lp_last + np.arange(1, HORIZON + 1) * r_daily
     price_path = np.exp(lp_path)
 
-    # 13. Xuất submission
+    # 14. Xuất submission cuối cùng
     make_submission(price_path, submission_output)
     print("Submission saved to:", submission_output)
-    
+        
 if __name__ == "__main__":
     run_pipeline1_direct(
         train_csv=TRAIN_CSV,
