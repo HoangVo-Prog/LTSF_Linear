@@ -434,9 +434,43 @@ Output Block 8:
 
 ### 11.1. Các feature được chọn:
 
-```python
-
+```bash
+Selected features (direct 100d): ['lp', 'close', 'open', 'high', 'low', 'sma_20', 'sma_60', 'sma_120', 'sma_200', 'price_sma20', 'price_sma60', 'price_sma120', 'price_sma200', 'ema_5', 'ema_12', 'ema_20', 'ema_26', 'ema_50', 'ret_120d', 'bb_low_20', 'bb_up_20', 'bb_low_60', 'bb_up_60', 'dd_60', 'dd_120', 'dd_200', 'month', 'month_sin', 'month_cos', 'vol_100d_back', 'vol_60_lag10', 'vol_60_lag5', 'vol_60_lag20', 'sma_lp_120', 'vol_sma_60', 'sma_90', 'vol_120_lag1', 'vol_120', 'vol_120_lag2', 'vol_120_lag3', 'vol_120_lag10', 'vol_120_lag5', 'vol_60_lag1', 'sma_5', 'vol_60', 'vol_60_lag3', 'vol_60_lag2', 'ema_lp_120', 'ema_lp_60', 'vol_120_lag20', 'sma_lp_60', 'ema_lp_20', 'sma_lp_20', 'sma_30', 'atr_14', 'dd_120_lag10', 'sma_10', 'bb_width_20', 'vol_30', 'vol_20_lag20', 'macd', 'vol_ratio_60_120', 'dd_120_lag20', 'pos_in_range_60', 'vol_20_lag10', 'macd_fast', 'vol_ma_ratio_20_60', 'price_sma5', 'vol_20_lag5', 'corr_ret_vol_20', 'drift_100d_back', 'ret_100d_back', 'ret_vol_of_vol_20', 'pos_in_range_120', 'bb_width_20_lag10', 'corr_ret_vol_20_lag20', 'vol_20', 'vol_20_lag3', 'vol_20_lag1', 'vol_20_lag2', 'dd_120_lag1', 'dd_120_lag2', 'bb_width_60_lag20', 'lp_minus_sma_120', 'dd_20_lag10', 'dd_120_lag5', 'lp_minus_ema_120', 'dd_120_lag3', 'price_sma120_lag20', 'vol_sma_20', 'macd_signal_lag2', 'macd_signal_lag3', 'macd_signal', 'dd_60_lag1', 'bb_width_60_lag10', 'macd_signal_lag1', 'macd_fast_lag20', 'dd_60_lag2', 'price_sma90', 'bb_width_60_lag5']
 ```
+
+### 11.2. Kết quả CV của từng model
+
+| Model          | Hyperparameter       | Value                     | Best Score |
+|----------------|----------------------|---------------------------|------------|
+| ElasticNet     | alpha                | 0.0003                    | 468.2870   |
+|                | l1_ratio             | 0.7                       |            |
+|                | max_iter             | 5000                      |            |
+|                | scale_target         | false                     |            |
+| Ridge          | alpha                | 1.0                       | 788.7753   |
+|                | scale_target         | false                     |            |
+| XGBoost        | n_estimators         | 400                       | 209.3468   |
+|                | max_depth            | 3                         |            |
+|                | learning_rate        | 0.02                      |            |
+|                | subsample            | 1.0                       |            |
+|                | colsample_bytree     | 0.8                       |            |
+|                | tree_method          | hist                      |            |
+|                | reg_lambda           | 1.0                       |            |
+|                | reg_alpha            | 0.0                       |            |
+| LightGBM       | n_estimators         | 400                       | 200.8915   |
+|                | max_depth            | 6                         |            |
+|                | learning_rate        | 0.02                      |            |
+|                | subsample            | 0.8                       |            |
+|                | colsample_bytree     | 0.8                       |            |
+|                | min_child_samples    | 40                        |            |
+| Random Forest  | n_estimators         | 200                       | 188.9185   |
+|                | max_depth            | null                      |            |
+|                | min_samplRandom Forestes_leaf     | 2                         |            |
+|                | max_features         | sqrt                      |            |
+| GBDT           | n_estimators         | 800                       | 167.6138   |
+|                | max_depth            | 2                         |            |
+|                | learning_rate        | 0.03                      |            |
+|                | subsample            | 0.8                       |            |
+
 
 ### 11.2. Bảng kết quả từng model base
 
@@ -447,12 +481,12 @@ Bạn có thể dùng bảng này trong README hoặc notebook log:
 
 | Model           | Top_k features | CV MSE (price) | Public LB |
 |----------------|----------------|----------------|-----------|
-| elasticnet     | 100             |                |           |
-| ridge          | 100             |                |           |
-| xgboost        | 100             |                |           | 
-| lgbm           | 100             |                |           |
-| random_forest  | 100             |                |           | 
-| gbdt           | 100             |                |           |  
+| ElasticNet     | 100             |468.2870        |848.4753   |
+| Ridge          | 100             |788.7753        |844.6113   |
+| XGBoost        | 100             |209.3468        |916.1048   | 
+| LightGBM       | 100             |200.8915        |859.4504   |
+| Random Forest  | 100             |188.9185        |708.9165   |
+| GBDT           | 100             |167.6138        |729.2800   |  
 ```
 
 Bạn chỉ cần điền:
@@ -468,12 +502,10 @@ Bạn chỉ cần điền:
 ```markdown
 ### Kết quả ensemble
 
-| Ensemble name     | Base models dùng                     | Meta model | CV MSE (price) | Public LB |
-|-------------------|--------------------------------------|-----------|----------------|-----------|
-| stack_ridge_60    | enet, ridge, xgb, lgbm, rf, gbdt    | Ridge     |                |           |
-| stack_enet_60     | enet, ridge, xgb, lgbm, rf, gbdt    | ElasticNet|                |           |
-| avg_top3          | xgb, lgbm, gbdt                     | mean      |                |           | 
-```
+| Ensemble name     | Base models dùng                     | Meta model | Public LB |
+|-------------------|--------------------------------------|-----------|-----------|
+| stack_ridge_1--    | enet, ridge, xgb, lgbm, rf, gbdt    | Ridge     | 299.7927  |
+
 
 ---
 

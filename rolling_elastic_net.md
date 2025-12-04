@@ -234,7 +234,7 @@ Gồm 2 cột:
 
 ### 2. Kết quả dự báo 100 ngày
 
-Kết quả trên public leader board:
+Kết quả trên public leaderboard:
 ```python
 MSE: 52.9284 
 ```
