@@ -7,7 +7,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 
-from .config import (
+from config import (
     FPT_TRAIN_DRIVE_ID,
     FPT_TEST_DRIVE_ID,
     TRAIN_CSV_PATH,

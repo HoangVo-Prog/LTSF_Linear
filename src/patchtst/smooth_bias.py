@@ -4,7 +4,7 @@ from typing import Tuple
 
 import numpy as np
 
-from .metrics import compute_metrics
+from metrics import compute_metrics
 
 
 def smooth_bias_correction_with_postprocessing(

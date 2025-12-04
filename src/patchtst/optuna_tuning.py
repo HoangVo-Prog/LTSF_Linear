@@ -7,8 +7,8 @@ import optuna
 from optuna import Trial
 from sklearn.metrics import mean_squared_error
 
-from .config import HORIZON, N_TRIALS
-from .patchtst_model import build_patchtst_model, make_neuralforecast
+from config import HORIZON, N_TRIALS
+from patchtst_model import build_patchtst_model, make_neuralforecast
 
 
 def prepare_optuna_data(train_nf_full):

@@ -5,7 +5,7 @@ from typing import Dict
 from neuralforecast import NeuralForecast
 from neuralforecast.models import PatchTST
 
-from .config import HORIZON
+from config import HORIZON
 
 
 def build_patchtst_model(

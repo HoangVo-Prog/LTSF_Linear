@@ -6,9 +6,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import TimeSeriesSplit
 
-from .config import HORIZON
-from .patchtst_model import build_patchtst_model, make_neuralforecast
-from .metrics import compute_metrics
+from config import HORIZON
+from patchtst_model import build_patchtst_model, make_neuralforecast
+from metrics import compute_metrics
 
 
 def collect_postprocessing_data(
