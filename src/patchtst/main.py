@@ -3,41 +3,8 @@
 import numpy as np
 
 # Cài đặt các thư viện cần thiết
-import subprocess
-import sys
-
-def install_package(package, import_name=None):
-    """Cài đặt package nếu chưa có"""
-    if import_name is None:
-        import_name = package
-    try:
-        __import__(import_name)
-        print(f"✓ {package} đã được cài đặt")
-        return True
-    except ImportError:
-        print(f"📦 Đang cài đặt {package}...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", package],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"✓ Đã cài đặt {package}")
-            return True
-        except Exception as e:
-            print(f"⚠️  Lỗi khi cài đặt {package}: {e}")
-            return False
-
-# 0. Cài đặt các thư viện cần thiết
-packages_to_install = [
-    ('neuralforecast', 'neuralforecast'),
-    ('optuna', 'optuna'),
-    ('scikit-learn', 'sklearn'),
-    ('scipy', 'scipy')
-]
-
-print("🔧 Kiểm tra và cài đặt các thư viện cần thiết...\n")
-for package, import_name in packages_to_install:
-    install_package(package, import_name)
-
-print("\n✓ Hoàn thành kiểm tra/cài đặt thư viện!")
+from pakages import install
+install()   
 
 from config import (
     TARGET_COL,
@@ -64,8 +31,7 @@ from smooth_bias import (
     smooth_bias_correction_with_postprocessing,
     evaluate_smooth_method,
 )
-
-
+from submission import make_submission
 
 
 
@@ -123,13 +89,11 @@ def main():
         baseline_mse=baseline_metrics["mse"],
         post_mse=post_metrics["mse"],
     )
+    
+    # 6. Save submission
+    print("\n================ Tạo file submission ================")
 
-    # 6. Placeholder: lưu submission nếu cần
-    # Bạn có thể ghi thêm:
-    # import pandas as pd
-    # submission = pd.DataFrame({"y": pred_smooth})
-    # submission.to_csv("submission_patchtst_best_method.csv", index=False)
-    # và sau đó điền MSE test 100 ngày vào báo cáo.
+    make_submission(pred_smooth)
 
 
 if __name__ == "__main__":
