@@ -430,23 +430,29 @@ Output Block 8:
 
 ---
 
-## 11. Bảng template kết quả submission
+## 11. Bảng kết quả submission
 
-### 11.1. Bảng kết quả từng model base
+### 11.1. Các feature được chọn:
+
+```python
+
+```
+
+### 11.2. Bảng kết quả từng model base
 
 Bạn có thể dùng bảng này trong README hoặc notebook log:
 
 ```markdown
 ### Kết quả submission từng model (Pipeline 1 Direct 100d)
 
-| Model           | Top_k features | CV MSE (price) | Public LB | Private LB | Seed | Ghi chú                      |
-|----------------|----------------|----------------|-----------|------------|------|------------------------------|
-| elasticnet     | 60             |                |           |            | 0    | FS advanced, scalar y_direct |
-| ridge          | 60             |                |           |            | 0    |                              |
-| xgboost        | 60             |                |           |            | 0    | tree_method = hist           |
-| lgbm           | 60             |                |           |            | 0    |                              |
-| random_forest  | 60             |                |           |            | 0    |                              |
-| gbdt           | 60             |                |           |            | 0    |                              |
+| Model           | Top_k features | CV MSE (price) | Public LB |
+|----------------|----------------|----------------|-----------|
+| elasticnet     | 100             |                |           |
+| ridge          | 100             |                |           |
+| xgboost        | 100             |                |           | 
+| lgbm           | 100             |                |           |
+| random_forest  | 100             |                |           | 
+| gbdt           | 100             |                |           |  
 ```
 
 Bạn chỉ cần điền:
@@ -457,36 +463,17 @@ Bạn chỉ cần điền:
 
 ---
 
-### 11.2. Bảng kết quả ensemble
+### 11.3. Bảng kết quả ensemble
 
 ```markdown
 ### Kết quả ensemble
 
-| Ensemble name     | Base models dùng                     | Meta model | CV MSE (price) | Public LB | Private LB | Ghi chú                          |
-|-------------------|--------------------------------------|-----------|----------------|-----------|------------|----------------------------------|
-| stack_ridge_60    | enet, ridge, xgb, lgbm, rf, gbdt    | Ridge     |                |           |            | OOF stacking trên price endpoint |
-| stack_enet_60     | enet, ridge, xgb, lgbm, rf, gbdt    | ElasticNet|                |           |            |                                  |
-| avg_top3          | xgb, lgbm, gbdt                     | mean      |                |           |            | Simple average                   |
+| Ensemble name     | Base models dùng                     | Meta model | CV MSE (price) | Public LB |
+|-------------------|--------------------------------------|-----------|----------------|-----------|
+| stack_ridge_60    | enet, ridge, xgb, lgbm, rf, gbdt    | Ridge     |                |           |
+| stack_enet_60     | enet, ridge, xgb, lgbm, rf, gbdt    | ElasticNet|                |           |
+| avg_top3          | xgb, lgbm, gbdt                     | mean      |                |           | 
 ```
 
 ---
 
-### 11.3. Bảng version pipeline
-
-```markdown
-### Version pipeline
-
-| Version | FS strategy                            | top_k | Models included                      | Ghi chú                           |
-|---------|----------------------------------------|-------|--------------------------------------|-----------------------------------|
-| v1      | Old FS (model based ENet + RF + XGB)   | 80    | enet, ridge, xgb, lgbm, rf, gbdt     | baseline                          |
-| v2      | Advanced FS (MI + corr + stability)    | 80    | enet, ridge, xgb, lgbm, rf, gbdt     | noise, vol heavy                  |
-| v3      | Advanced FS + weight tweak + whitelist | 60    | enet, ridge, xgb, lgbm, rf, gbdt     | current best                      |
-```
-
-Bạn có thể dùng 3 bảng này để:
-
-* Document toàn bộ pipeline
-* Ghi lại mọi lần submission
-* So sánh version pipeline và chiến lược FS
-
-Nếu bạn muốn, mình có thể viết thêm phần README hoàn chỉnh (markdown) cho repo, chỉ copy paste vào `README_pipeline1.md` là xong.
