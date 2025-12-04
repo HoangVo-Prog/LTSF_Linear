@@ -7,8 +7,6 @@ import pandas as pd
 
 from models_direct import MODEL_REGISTRY, Direct100Model
 
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import HORIZON, RANDOM_STATE
 from evaluation_direct import compute_endpoint_price_from_direct, mse
 

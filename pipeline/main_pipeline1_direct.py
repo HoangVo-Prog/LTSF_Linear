@@ -29,9 +29,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import pandas as pd
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 
-import sys, os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from data_utils import (
     load_data,
     add_base_series,
