@@ -2,28 +2,28 @@
 
 import numpy as np
 
-from patchtst_best.config import (
+from config import (
     TARGET_COL,
     HORIZON,
     SMOOTH_RATIO,
     SMOOTH_METHOD,
 )
-from patchtst_best.data import (
+from data import (
     load_train_csv,
     load_test_csv,
     split_train_val,
     prepare_neuralforecast_frames,
     get_test_ground_truth,
 )
-from patchtst_best.patchtst_model import build_patchtst_model, make_neuralforecast
-from patchtst_best.optuna_tuning import run_optuna
-from patchtst_best.postprocessing import (
+from patchtst_model import build_patchtst_model, make_neuralforecast
+from optuna_tuning import run_optuna
+from postprocessing import (
     collect_postprocessing_data,
     train_linear_post_model,
     apply_postprocessing,
 )
-from patchtst_best.metrics import compute_metrics, print_metrics
-from patchtst_best.smooth_bias import (
+from metrics import compute_metrics, print_metrics
+from smooth_bias import (
     smooth_bias_correction_with_postprocessing,
     evaluate_smooth_method,
 )
